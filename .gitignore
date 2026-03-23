@@ -1,0 +1,58 @@
+# Track source code, CubeMX metadata, linker scripts, docs, and shared editor
+# settings. Ignore generated build trees and local IDE state.
+
+# Build directories
+/build/
+/out/
+/cmake-build-*/
+/Debug/
+/Release/
+/RelWithDebInfo/
+/MinSizeRel/
+
+# CMake / Ninja generated files (when generated in the source tree)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+build.ninja
+.ninja_deps
+.ninja_log
+CTestTestfile.cmake
+Testing/
+
+# Firmware / object outputs
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+*.o
+*.obj
+*.a
+*.lib
+*.d
+*.su
+
+# Tool caches
+.cache/
+.clangd/
+
+# STM32Cube / Eclipse local state
+/.settings/
+/.metadata/
+
+# VS Code: keep sharable workspace files, ignore local-only files
+/.vscode/*
+!/.vscode/settings.json
+!/.vscode/tasks.json
+!/.vscode/launch.json
+!/.vscode/extensions.json
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
+*.tmp
+*.bak
+*~
