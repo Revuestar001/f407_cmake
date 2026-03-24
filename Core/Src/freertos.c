@@ -26,7 +26,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "bsp_board.h"
+#include "bsp_gpio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,7 +50,7 @@
 osThreadId_t userLEDTaskHandle;
 const osThreadAttr_t userLEDTask_attributes = {
   .name = "userLEDTask",
-  .stack_size = 128,
+  .stack_size = 128 * 4, // 字节数，不可以小于#define configMINIMAL_STACK_SIZE ((uint16_t)128) * 4
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE END Variables */
@@ -135,7 +136,9 @@ void StartDefaultTask(void *argument)
 void StartUserLEDTask(void *argument)
 {
   for (;;) {
-    HAL_GPIO_TogglePin(GPIOH, userLEDBule_Pin);
+    bspGPIOInstance_t *gpio_ptr = bspBoardGetGPIOInstance(BSP_GPIO_USER_LED_BLUE);
+    bspGPIOToggle(gpio_ptr);
+    // HAL_GPIO_TogglePin(GPIOH, userLEDBule_Pin);
 
     osDelay(1000);
   } 
