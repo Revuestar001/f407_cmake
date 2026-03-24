@@ -1,0 +1,39 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CMake: configure",
+            "type": "process",
+            "command": "C:\\Program Files\\CMake\\bin\\cmake.exe",
+            "args": [
+                "--preset",
+                "Debug"
+            ],
+            "options": {
+                "env": {
+                    "PATH": "${env:LOCALAPPDATA}\\stm32cube\\bundles\\gnu-tools-for-stm32\\14.3.1+st.2\\bin;${env:LOCALAPPDATA}\\stm32cube\\bundles\\ninja\\1.13.1+st.1\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "CMake: build",
+            "type": "process",
+            "command": "C:\\Program Files\\CMake\\bin\\cmake.exe",
+            "args": [
+                "--build",
+                "--preset",
+                "Debug"
+            ],
+            "options": {
+                "env": {
+                    "PATH": "${env:LOCALAPPDATA}\\stm32cube\\bundles\\gnu-tools-for-stm32\\14.3.1+st.2\\bin;${env:LOCALAPPDATA}\\stm32cube\\bundles\\ninja\\1.13.1+st.1\\bin;${env:PATH}"
+                }
+            },
+            "dependsOn": [
+                "CMake: configure"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
