@@ -1,5 +1,6 @@
 #pragma once
 #include "bsp_gpio.h"
+#include "bsp_uart.h"
 #include "bsp_def.h"
 
 typedef enum 
@@ -9,5 +10,13 @@ typedef enum
 } bspGPIOId_e;
 
 bspGPIOInstance_t *bspBoardGetGPIOInstance(bspGPIOId_e gpio_id);
+
+typedef enum 
+{
+    BSP_UART_PRINT = 0,
+    BSP_UART_MAX
+} bspUARTId_e;
+
+bspUARTInstance_t *bspBoardGetUARTInstance(bspUARTId_e uart_id);
 
 void bspBoardInit();

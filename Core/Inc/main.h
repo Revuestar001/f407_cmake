@@ -57,6 +57,7 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define uart_print huart1
 #define userLEDBule_Pin GPIO_PIN_10
 #define userLEDBule_GPIO_Port GPIOH
 

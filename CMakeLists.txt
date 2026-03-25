@@ -46,6 +46,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Bsp/Src/bsp_gpio/bsp_gpio.c
+    Bsp/Src/bsp_uart/bsp_uart.c
     Bsp/Src/bsp_board.c
 )
 
@@ -53,6 +54,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     Bsp/Inc/bsp_gpio
+    Bsp/Inc/bsp_uart
     Bsp/Inc/
 )
 
