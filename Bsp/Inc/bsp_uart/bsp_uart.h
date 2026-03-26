@@ -22,7 +22,12 @@ typedef enum
 
 // 结构体前向声明
 typedef struct uart_instance bspUARTInstance_t;
-typedef void (*bspUARTRxEventCallback_f)(void *owner_ptr, uint8_t *rx_buffer_ptr, uint16_t rx_buffer_cur_index, bspUARTRxEventType_e rx_event) ; // 接受事件中断回调函数指针
+typedef void (*bspUARTRxEventCallback_f)(void *owner_ptr, 
+                                        uint8_t *rx_buffer_ptr, 
+                                        uint16_t rx_buffer_size,
+                                        uint16_t rx_data_start_index,
+                                        uint16_t rx_data_end_pos, 
+                                        bspUARTRxEventType_e rx_event) ; // 接受事件中断回调函数指针
 typedef void (*bspUARTTxCpltCallback_f)(void *owner_ptr) ; // 发送完成中断回调函数指针
 typedef void (*bspUARTErrorCallback_f)(void *owner_ptr) ; // 错误中断回调函数指针
 

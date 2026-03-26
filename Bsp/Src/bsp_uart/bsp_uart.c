@@ -18,6 +18,7 @@ typedef struct uart_instance
 
     uint8_t *rx_buffer_ptr_; // 接收缓冲区指针
     uint16_t rx_buffer_size_;
+    uint16_t rx_last_pos_; // 上次DMA指针在环形缓冲区的位置，不是数组下标
 
     const char *name_;
 
@@ -106,10 +107,16 @@ void bspUARTErrorCallbackRegister(bspUARTInstance_t *instance , void *owner_ptr,
 }
 
 bspUARTStatus_e bspUARTRxStart(bspUARTInstance_t *instance)
-{
-    // 只有DMA传输满和空闲中断触发
+{   
     HAL_StatusTypeDef status_hal = HAL_UARTEx_ReceiveToIdle_DMA(instance->uart_handle_, instance->rx_buffer_ptr_, instance->rx_buffer_size_);
-    __HAL_DMA_DISABLE_IT(instance->uart_handle_->hdmarx, DMA_IT_HT);
+    if (status_hal == HAL_OK) {
+        // 成功启动接收时
+        // 重置上一次DMA指向的位置为0
+        instance->rx_last_pos_ = 0;
+    }
+    
+    // DMA循环模式下，不再关闭DMA半满中断
+    // __HAL_DMA_DISABLE_IT(instance->uart_handle_->hdmarx, DMA_IT_HT);
 
     return bspUARTGetStatusFromHAL(status_hal);
 }
@@ -139,22 +146,65 @@ bool bspUARTTxIsBusy(bspUARTInstance_t *instance)
     return instance->uart_handle_->gState == HAL_UART_STATE_BUSY_TX;
 }
 
+// DMA循环模式，此时uint16_t Size为DMA硬件指针指向的数组中的绝对偏移
+// 也就是Size = 10时，数组[0, ..., 9]数据有效
+// 也就是说，发生TC事件时，Size = sizeof(buffer)，作为下标会越界
+// 配合rx_last_pos_可计算本次DMA触发中断所传输的字节数
+// rx_last_pos：上次交付到上层的尾后位置
+// rx_cur_pos：这次 DMA 可用数据的尾后位置
+// 新增数据：
+// [rx_last_pos, rx_cur_pos)
+// 如果DMA绕回：
+// [rx_last_pos, buffer_size) + [0, rx_cur_pos)
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
-    uint16_t rx_buffer_cur_index = Size;
     bspUARTRxEventType_e rx_event = bspUARTGetRxEventTypeFromHAL(HAL_UARTEx_GetRxEventType(huart));
 
     for (size_t i = 0; i < uart_memory_index_; i ++) {
         if (uart_instance_memory_[i].uart_handle_ == huart) {
-            if (uart_instance_memory_[i].rx_event_callback_ != NULL) {
-                uart_instance_memory_[i].rx_event_callback_(uart_instance_memory_[i].owner_, 
-                                                            uart_instance_memory_[i].rx_buffer_ptr_, 
-                                                            rx_buffer_cur_index, 
-                                                            rx_event);
+            bspUARTInstance_t *instance = &uart_instance_memory_[i];
+
+            uint16_t rx_cur_pos = Size;
+            uint16_t rx_last_pos = instance->rx_last_pos_;
+            uint16_t rx_buffer_size = instance->rx_buffer_size_;
+
+            if (rx_buffer_size == 0 || instance->rx_buffer_ptr_ == NULL) {
+                return;
             }
-            // 注意这里实现很危险
-            // 重新启动接收
-            bspUARTRxStart(&uart_instance_memory_[i]);
+            
+            // 两个越界保护，不应该被触发
+            if (rx_cur_pos > rx_buffer_size) {
+                rx_cur_pos = rx_buffer_size;
+            }
+            if (rx_last_pos >= rx_buffer_size) {
+                rx_last_pos = 0;
+                instance->rx_last_pos_ = 0;
+            }
+
+            if (rx_cur_pos != rx_last_pos) {
+                if (instance->rx_event_callback_ != NULL) {
+                    // rx_cur_pos > rx_last_pos
+                    // 正常收到连续的一段
+                    // 或
+                    // rx_cur_pos < rx_last_pos
+                    // DMA从缓冲区绕回，数据分为两段
+                    // owner自行拆为两段数据
+                    instance->rx_event_callback_(instance->owner_,
+                                                instance->rx_buffer_ptr_,
+                                                rx_buffer_size,
+                                                rx_last_pos,
+                                                rx_cur_pos,
+                                                rx_event);  
+                }    
+            } else {
+                // rx_cur_pos = rx_last_pos
+                // 可能没有新数据，也可能DMA绕了一整圈发生覆盖，这里开启了TC HT IDLE中断，默认处理速度足够
+            }
+
+            // 无论回调函数是否注册，都更新rx_last_pos_
+            // 发生TC事件时，Size = sizeof(buffer)，作为下标会越界，取余
+            instance->rx_last_pos_ = rx_cur_pos % rx_buffer_size;
+
             break;
         }
     }
@@ -180,6 +230,8 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
                 // 为什么不直接 bspUARTRxStart()?
                 uart_instance_memory_[i].error_callback_(uart_instance_memory_[i].owner_);
             }
+            // 简单处理，重启接收
+            bspUARTRxStart(&uart_instance_memory_[i]);
             break;
         }
     }
