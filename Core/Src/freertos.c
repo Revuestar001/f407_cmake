@@ -27,7 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "bsp_board.h"
 #include "bsp_gpio.h"
-#include "bsp_uart.h"
+#include "bsp_spi.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -38,7 +38,18 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define BMI088_SPI_READ_MASK            0x80U
+#define BMI088_SPI_WRITE_MASK           0x7FU
 
+#define BMI088_ACCEL_CHIP_ID_REG        0x00U
+#define BMI088_ACCEL_CHIP_ID            0x1EU
+#define BMI088_ACCEL_PWR_CONF_REG       0x7CU
+#define BMI088_ACCEL_PWR_CTRL_REG       0x7DU
+#define BMI088_ACCEL_PWR_CONF_ACTIVE    0x00U
+#define BMI088_ACCEL_PWR_CTRL_ENABLE    0x04U
+
+#define BMI088_GYRO_CHIP_ID_REG         0x00U
+#define BMI088_GYRO_CHIP_ID             0x0FU
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,20 +59,15 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-osThreadId_t userLEDTaskHandle;
-static volatile uint8_t uart3_rx_ready_ = 0;
-static volatile uint16_t uart3_rx_len_ = 0;
-static volatile bspUARTRxEventType_e uart3_rx_event_ = BSP_UART_RX_EVENT_INVALID;
-static volatile uint32_t uart3_rx_count_ = 0;
-static volatile uint8_t uart3_tx_ready_ = 1;
-static uint8_t uart3_rx_shadow_[BSP_UART_RX_BUFFER_SIZE] = {0};
-static uint8_t uart3_tx_buffer_[BSP_UART_RX_BUFFER_SIZE + 16] = {0};
-static uint8_t uart3_boot_msg_[] = "UART3 TX_IT RX_DMA_IDLE test ready.\r\n";
-const osThreadAttr_t userLEDTask_attributes = {
-  .name = "userLEDTask",
-  .stack_size = 128 * 4, // 字节数，不可以小于#define configMINIMAL_STACK_SIZE ((uint16_t)128) * 4
-  .priority = (osPriority_t) osPriorityNormal,
-};
+static volatile uint8_t bmi088_test_ok_ = 0U;
+static volatile uint8_t bmi088_test_error_step_ = 0U;
+static volatile bspSPIStatus_e bmi088_last_spi_status_ = BSP_SPI_OK;
+static volatile uint8_t bmi088_acc_chip_id_ = 0U;
+static volatile uint8_t bmi088_gyro_chip_id_ = 0U;
+static volatile uint8_t bmi088_acc_pwr_conf_readback_ = 0U;
+static volatile uint8_t bmi088_acc_pwr_ctrl_readback_ = 0U;
+static volatile uint32_t bmi088_test_count_ = 0U;
+static volatile uint32_t debug = 0U;
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -73,10 +79,26 @@ const osThreadAttr_t defaultTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-void StartUserLEDTask(void *argument);
-static void UART3RxTestCallback(void *owner_ptr, uint8_t *rx_buffer_ptr, uint16_t rx_buffer_cur_index, bspUARTRxEventType_e rx_event);
-static void UART3TxTestCallback(void *owner_ptr);
-static void UART3ErrorTestCallback(void *owner_ptr);
+static bspSPIStatus_e BMI088Transfer(bspSPIInstance_t *spi,
+                                     bspGPIOInstance_t *cs,
+                                     uint8_t *tx_buffer,
+                                     uint8_t *rx_buffer,
+                                     uint16_t data_size);
+static bspSPIStatus_e BMI088AccelReadReg(bspSPIInstance_t *spi,
+                                         bspGPIOInstance_t *acc_cs,
+                                         uint8_t reg_addr,
+                                         uint8_t *reg_data);
+static bspSPIStatus_e BMI088AccelWriteReg(bspSPIInstance_t *spi,
+                                          bspGPIOInstance_t *acc_cs,
+                                          uint8_t reg_addr,
+                                          uint8_t reg_data);
+static bspSPIStatus_e BMI088GyroReadReg(bspSPIInstance_t *spi,
+                                        bspGPIOInstance_t *gyro_cs,
+                                        uint8_t reg_addr,
+                                        uint8_t *reg_data);
+static bspSPIStatus_e BMI088RunSmokeTest(bspSPIInstance_t *spi,
+                                         bspGPIOInstance_t *acc_cs,
+                                         bspGPIOInstance_t *gyro_cs);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -114,8 +136,7 @@ void MX_FREERTOS_Init(void) {
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* UART3 RX test uses the blue LED as receive indication, so the heartbeat
-     LED task is intentionally not created here. */
+  /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -134,102 +155,199 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  bspUARTInstance_t *uart = bspBoardGetUARTInstance(BSP_UART_PRINT);
+  bspSPIInstance_t *spi = bspBoardGetSPIInstance(BSP_SPI_IMU);
   bspGPIOInstance_t *led = bspBoardGetGPIOInstance(BSP_GPIO_USER_LED_BLUE);
-  uint32_t led_off_tick = 0;
+  bspGPIOInstance_t *acc_cs = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_ACCEL);
+  bspGPIOInstance_t *gyro_cs = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_GYRO);
+  uint32_t led_toggle_tick = 0U;
 
-  if (uart != NULL) {
-    bspUARTRxEventCallbackRegister(uart, NULL, UART3RxTestCallback);
-    bspUARTTxCpltCallbackRegister(uart, NULL, UART3TxTestCallback);
-    bspUARTErrorCallbackRegister(uart, NULL, UART3ErrorTestCallback);
-    bspUARTRxStart(uart);
-    uart3_tx_ready_ = 0;
-    if (bspUARTTransimt(uart, uart3_boot_msg_, sizeof(uart3_boot_msg_) - 1) != BSP_UART_OK) {
-      uart3_tx_ready_ = 1;
+  (void)argument;
+
+  if (spi == NULL || led == NULL || acc_cs == NULL || gyro_cs == NULL) {
+    for (;;) {
+      osDelay(1000);
     }
   }
 
-  if (led != NULL) {
-    bspGPIOWriteLogic(led, false);
+  bspGPIOWriteLogic(led, false);
+
+  bmi088_test_ok_ = 0U;
+  bmi088_test_error_step_ = 0U;
+  bmi088_last_spi_status_ = BMI088RunSmokeTest(spi, acc_cs, gyro_cs);
+
+  if (bmi088_last_spi_status_ == BSP_SPI_OK) {
+    bmi088_test_ok_ = 1U;
   }
 
-  for (;;)
-  {
-    if (uart3_rx_ready_ != 0 && uart != NULL && uart3_tx_ready_ != 0) {
-      uint16_t rx_len = 0;
-      uint16_t tx_len = 0;
-
-      taskENTER_CRITICAL();
-      rx_len = uart3_rx_len_;
-      if (rx_len > BSP_UART_RX_BUFFER_SIZE) {
-        rx_len = BSP_UART_RX_BUFFER_SIZE;
+  for (;;) {
+    debug++;
+    if (bmi088_test_ok_ != 0U) {
+      if (osKernelGetTickCount() >= led_toggle_tick) {
+        bspGPIOToggle(led);
+        led_toggle_tick = osKernelGetTickCount() + 200U;
       }
-      memcpy(&uart3_tx_buffer_[0], "RX: ", 4);
-      memcpy(&uart3_tx_buffer_[4], uart3_rx_shadow_, rx_len);
-      memcpy(&uart3_tx_buffer_[4 + rx_len], "\r\n", 2);
-      tx_len = 4 + rx_len + 2;
-      uart3_rx_ready_ = 0;
-      taskEXIT_CRITICAL();
-
-      if (led != NULL) {
-        bspGPIOWriteLogic(led, true);
-        led_off_tick = osKernelGetTickCount() + 100U;
-      }
-
-      uart3_tx_ready_ = 0;
-      if (bspUARTTransimt(uart, uart3_tx_buffer_, tx_len) != BSP_UART_OK) {
-        uart3_tx_ready_ = 1;
-      }
+    } else {
+      bspGPIOWriteLogic(led, true);
     }
 
-    if (led != NULL && led_off_tick != 0U && osKernelGetTickCount() >= led_off_tick) {
-      bspGPIOWriteLogic(led, false);
-      led_off_tick = 0U;
-    }
-
-    osDelay(5);
+    osDelay(10);
   }
   /* USER CODE END StartDefaultTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-void StartUserLEDTask(void *argument)
+static bspSPIStatus_e BMI088Transfer(bspSPIInstance_t *spi,
+                                     bspGPIOInstance_t *cs,
+                                     uint8_t *tx_buffer,
+                                     uint8_t *rx_buffer,
+                                     uint16_t data_size)
 {
-  for (;;) {
-    osDelay(1000);
-  } 
-}
+  bspSPIStatus_e status;
 
-static void UART3RxTestCallback(void *owner_ptr, uint8_t *rx_buffer_ptr, uint16_t rx_buffer_cur_index, bspUARTRxEventType_e rx_event)
-{
-  (void)owner_ptr;
-
-  if (rx_buffer_ptr == NULL) {
-    return;
+  if (spi == NULL || cs == NULL || tx_buffer == NULL || rx_buffer == NULL || data_size == 0U) {
+    return BSP_SPI_ERROR;
   }
 
-  if (rx_buffer_cur_index > BSP_UART_RX_BUFFER_SIZE) {
-    rx_buffer_cur_index = BSP_UART_RX_BUFFER_SIZE;
+  bspGPIOWriteLogic(cs, true);
+  status = bspSPITransmitReceive(spi, tx_buffer, rx_buffer, data_size);
+  bspGPIOWriteLogic(cs, false);
+
+  return status;
+}
+
+static bspSPIStatus_e BMI088AccelReadReg(bspSPIInstance_t *spi,
+                                         bspGPIOInstance_t *acc_cs,
+                                         uint8_t reg_addr,
+                                         uint8_t *reg_data)
+{
+  uint8_t tx_buffer[3] = {(uint8_t)(reg_addr | BMI088_SPI_READ_MASK), 0x00U, 0x00U};
+  uint8_t rx_buffer[3] = {0};
+  bspSPIStatus_e status;
+
+  if (reg_data == NULL) {
+    return BSP_SPI_ERROR;
   }
 
-  memcpy(uart3_rx_shadow_, rx_buffer_ptr, rx_buffer_cur_index);
-  uart3_rx_len_ = rx_buffer_cur_index;
-  uart3_rx_event_ = rx_event;
-  uart3_rx_count_++;
-  uart3_rx_ready_ = 1;
+  status = BMI088Transfer(spi, acc_cs, tx_buffer, rx_buffer, 3U);
+  if (status == BSP_SPI_OK) {
+    *reg_data = rx_buffer[2];
+  }
+
+  return status;
 }
 
-static void UART3TxTestCallback(void *owner_ptr)
+static bspSPIStatus_e BMI088AccelWriteReg(bspSPIInstance_t *spi,
+                                          bspGPIOInstance_t *acc_cs,
+                                          uint8_t reg_addr,
+                                          uint8_t reg_data)
 {
-  (void)owner_ptr;
-  uart3_tx_ready_ = 1;
+  uint8_t tx_buffer[2] = {(uint8_t)(reg_addr & BMI088_SPI_WRITE_MASK), reg_data};
+  uint8_t rx_buffer[2] = {0};
+
+  return BMI088Transfer(spi, acc_cs, tx_buffer, rx_buffer, 2U);
 }
 
-static void UART3ErrorTestCallback(void *owner_ptr)
+static bspSPIStatus_e BMI088GyroReadReg(bspSPIInstance_t *spi,
+                                        bspGPIOInstance_t *gyro_cs,
+                                        uint8_t reg_addr,
+                                        uint8_t *reg_data)
 {
-  (void)owner_ptr;
-  uart3_tx_ready_ = 1;
+  uint8_t tx_buffer[2] = {(uint8_t)(reg_addr | BMI088_SPI_READ_MASK), 0x00U};
+  uint8_t rx_buffer[2] = {0};
+  bspSPIStatus_e status;
+
+  if (reg_data == NULL) {
+    return BSP_SPI_ERROR;
+  }
+
+  status = BMI088Transfer(spi, gyro_cs, tx_buffer, rx_buffer, 2U);
+  if (status == BSP_SPI_OK) {
+    *reg_data = rx_buffer[1];
+  }
+
+  return status;
+}
+
+static bspSPIStatus_e BMI088RunSmokeTest(bspSPIInstance_t *spi,
+                                         bspGPIOInstance_t *acc_cs,
+                                         bspGPIOInstance_t *gyro_cs)
+{
+  bspSPIStatus_e status;
+  uint8_t dummy_data = 0U;
+
+  bmi088_test_count_++;
+
+  /* First dummy read switches the accelerometer part into SPI mode.
+     The returned value is expected to be invalid. */
+  status = BMI088AccelReadReg(spi, acc_cs, BMI088_ACCEL_CHIP_ID_REG, &dummy_data);
+  if (status != BSP_SPI_OK) {
+    bmi088_test_error_step_ = 1U;
+    return status;
+  }
+
+  osDelay(2);
+
+  status = BMI088AccelWriteReg(spi, acc_cs, BMI088_ACCEL_PWR_CONF_REG, BMI088_ACCEL_PWR_CONF_ACTIVE);
+  if (status != BSP_SPI_OK) {
+    bmi088_test_error_step_ = 2U;
+    return status;
+  }
+
+  osDelay(2);
+
+  status = BMI088AccelWriteReg(spi, acc_cs, BMI088_ACCEL_PWR_CTRL_REG, BMI088_ACCEL_PWR_CTRL_ENABLE);
+  if (status != BSP_SPI_OK) {
+    bmi088_test_error_step_ = 3U;
+    return status;
+  }
+
+  osDelay(5);
+
+  status = BMI088AccelReadReg(spi, acc_cs, BMI088_ACCEL_CHIP_ID_REG, (uint8_t *)&bmi088_acc_chip_id_);
+  if (status != BSP_SPI_OK) {
+    bmi088_test_error_step_ = 4U;
+    return status;
+  }
+
+  status = BMI088GyroReadReg(spi, gyro_cs, BMI088_GYRO_CHIP_ID_REG, (uint8_t *)&bmi088_gyro_chip_id_);
+  if (status != BSP_SPI_OK) {
+    bmi088_test_error_step_ = 5U;
+    return status;
+  }
+
+  status = BMI088AccelReadReg(spi, acc_cs, BMI088_ACCEL_PWR_CONF_REG, (uint8_t *)&bmi088_acc_pwr_conf_readback_);
+  if (status != BSP_SPI_OK) {
+    bmi088_test_error_step_ = 6U;
+    return status;
+  }
+
+  status = BMI088AccelReadReg(spi, acc_cs, BMI088_ACCEL_PWR_CTRL_REG, (uint8_t *)&bmi088_acc_pwr_ctrl_readback_);
+  if (status != BSP_SPI_OK) {
+    bmi088_test_error_step_ = 7U;
+    return status;
+  }
+
+  if (bmi088_acc_chip_id_ != BMI088_ACCEL_CHIP_ID) {
+    bmi088_test_error_step_ = 8U;
+    return BSP_SPI_ERROR;
+  }
+
+  if (bmi088_gyro_chip_id_ != BMI088_GYRO_CHIP_ID) {
+    bmi088_test_error_step_ = 9U;
+    return BSP_SPI_ERROR;
+  }
+
+  if (bmi088_acc_pwr_conf_readback_ != BMI088_ACCEL_PWR_CONF_ACTIVE) {
+    bmi088_test_error_step_ = 10U;
+    return BSP_SPI_ERROR;
+  }
+
+  if (bmi088_acc_pwr_ctrl_readback_ != BMI088_ACCEL_PWR_CTRL_ENABLE) {
+    bmi088_test_error_step_ = 11U;
+    return BSP_SPI_ERROR;
+  }
+
+  return BSP_SPI_OK;
 }
 /* USER CODE END Application */
-

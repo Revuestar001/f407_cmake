@@ -1,16 +1,22 @@
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+
+#include "main.h"
 
 #include "bsp_board.h"
 #include "bsp_def.h"
 #include "bsp_gpio_private.h"
 #include "bsp_uart_private.h"
+#include "bsp_spi_private.h"
 
 // 储存所有GPIO实例的指针
 static bspGPIOInstance_t *bspBoardGPIOInstancePtrArray[BSP_GPIO_MAX] = {NULL};
 // 储存所有UART实例的指针
 static bspUARTInstance_t *bspBoardUARTInstancePtrArray[BSP_UART_MAX] = {NULL};
 static uint8_t bspUARTRxBuffer[BSP_UART_MAX][BSP_UART_RX_BUFFER_SIZE] = {0};
+// 储存所有SPI实例的指针
+static bspSPIInstance_t *bspBoardSPIInstancePtrArray[BSP_SPI_MAX] = {NULL};
 
 //
 // GPIO
@@ -32,9 +38,24 @@ static bspGPIOConfig_t bspBoardSetGPIOConfig(GPIO_TypeDef *gpio_port,
 static void bspBoardGPIOInit()
 {   
     bspGPIOConfig_t gpio_config = {0};
-
-    gpio_config = bspBoardSetGPIOConfig(userLEDBule_GPIO_Port, userLEDBule_Pin, BSP_GPIO_ACTIVE_HIGH, "USER_LED_BLUE");
+    // LED
+    gpio_config = bspBoardSetGPIOConfig(LED_BLUE_GPIO_Port, LED_BLUE_Pin, BSP_GPIO_ACTIVE_HIGH, "USER_LED_BLUE");
     bspBoardGPIOInstancePtrArray[BSP_GPIO_USER_LED_BLUE] = bspGPIOInit(&gpio_config);
+
+    // SPI CS
+    // 认为CS选中(有效)时，为低电平，初始化后，应该立即拉高CS电平
+    gpio_config = bspBoardSetGPIOConfig(CS1_ACCEL_GPIO_Port, CS1_ACCEL_Pin, BSP_GPIO_ACTIVE_LOW, "CS1_ACCEL");
+    bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_CS1_ACCEL] = bspGPIOInit(&gpio_config);
+    bspGPIOWriteLogic(bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_CS1_ACCEL], false);
+    gpio_config = bspBoardSetGPIOConfig(CS1_GYRO_GPIO_Port, CS1_GYRO_Pin, BSP_GPIO_ACTIVE_LOW, "CS1_GYRO");
+    bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_CS1_GYRO] = bspGPIOInit(&gpio_config);
+    bspGPIOWriteLogic(bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_CS1_GYRO], false);
+    // EXTI
+    // 逻辑有效电平怎么给？
+    gpio_config = bspBoardSetGPIOConfig(INT1_ACCEL_GPIO_Port, INT1_ACCEL_Pin, BSP_GPIO_ACTIVE_HIGH, "INT1_ACCEL");
+    bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_INT1_ACCEL] = bspGPIOInit(&gpio_config);
+    gpio_config = bspBoardSetGPIOConfig(INT1_GYRO_GPIO_Port, INT1_GYRO_Pin, BSP_GPIO_ACTIVE_HIGH, "INT1_GYRO");
+    bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_INT1_GYRO] = bspGPIOInit(&gpio_config);
 }
 
 bspGPIOInstance_t *bspBoardGetGPIOInstance(bspGPIOId_e gpio_id)
@@ -90,10 +111,43 @@ bspUARTInstance_t *bspBoardGetUARTInstance(bspUARTId_e uart_id)
 }
 
 //
+// SPI
+//
+static bspSPIConfig_t bspBoardSetSPIConfig(SPI_HandleTypeDef *spi_handle, 
+                                            bspSPIWorkMode_e spi_work_mode, 
+                                            const char *spi_name)
+{
+    bspSPIConfig_t spi_config;
+    spi_config.spi_handle_ = spi_handle;
+    spi_config.spi_work_mode_ = spi_work_mode;
+    spi_config.name_ = spi_name;
+
+    return spi_config;
+}
+
+static void bspBoardSPIInit()
+{   
+    bspSPIConfig_t spi_config = {0};
+
+    spi_config = bspBoardSetSPIConfig(&SPI_IMU, BSP_SPI_WORK_MODE_BLOCKING, "SPI_IMU");
+    bspBoardSPIInstancePtrArray[BSP_SPI_IMU] = bspSPIInit(&spi_config);
+}
+
+bspSPIInstance_t *bspBoardGetSPIInstance(bspSPIId_e spi_id)
+{
+    if (spi_id >= BSP_SPI_MAX) {
+        return NULL;
+    }
+
+    return bspBoardSPIInstancePtrArray[spi_id];
+}
+
+//
 // BOARD
 //
 void bspBoardInit()
 {
     bspBoardGPIOInit();
     bspBoardUARTInit();
+    bspBoardSPIInit();
 }
