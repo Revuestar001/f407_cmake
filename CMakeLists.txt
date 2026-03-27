@@ -52,6 +52,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/bsp_board.c
 
     Module/Src/Util/ring_buffer.c
+    Module/Src/Protocol/sbus.c
 )
 
 # Add include paths
@@ -64,6 +65,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Inc/
 
     Module/Inc/Util/
+    Module/Inc/Protocol/
 )
 
 # Add project symbols (macros)
