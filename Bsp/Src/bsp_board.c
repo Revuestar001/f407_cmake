@@ -9,6 +9,7 @@
 #include "bsp_gpio_private.h"
 #include "bsp_uart_private.h"
 #include "bsp_spi_private.h"
+#include "bsp_can_private.h"
 
 // 储存所有GPIO实例的指针
 static bspGPIOInstance_t *bspBoardGPIOInstancePtrArray[BSP_GPIO_MAX] = {NULL};
@@ -17,6 +18,8 @@ static bspUARTInstance_t *bspBoardUARTInstancePtrArray[BSP_UART_MAX] = {NULL};
 static uint8_t bspUARTRxBuffer[BSP_UART_MAX][BSP_UART_RX_BUFFER_SIZE] = {0};
 // 储存所有SPI实例的指针
 static bspSPIInstance_t *bspBoardSPIInstancePtrArray[BSP_SPI_MAX] = {NULL};
+// 储存所有CAN实例的指针
+static bspCANInstance_t *bspBoardCANInstancePtrArray[BSP_CAN_MAX] = {NULL};
 
 //
 // GPIO
@@ -92,7 +95,7 @@ static void bspBoardUARTInit()
 {   
     bspUARTConfig_t uart_config = {0};
 
-    uart_config = bspBoardSetUARTConfig(&uart_print, 
+    uart_config = bspBoardSetUARTConfig(&UART_PRINT, 
                                         BSP_UART_RX_MODE_DMA_IDLE, 
                                         BSP_UART_TX_MODE_IT, 
                                         &bspUARTRxBuffer[BSP_UART_PRINT][0],
@@ -143,6 +146,36 @@ bspSPIInstance_t *bspBoardGetSPIInstance(bspSPIId_e spi_id)
 }
 
 //
+// CAN
+//
+static bspCANConfig_t bspBoardSetCANConfig(CAN_HandleTypeDef *can_handle,
+                                            const char *can_name)
+{
+    bspCANConfig_t can_config;
+    can_config.can_handle_ = can_handle;
+    can_config.name_ = can_name;
+
+    return can_config;
+}
+
+static void bspBoardCANInit()
+{
+    bspCANConfig_t can_config = {0};
+
+    can_config = bspBoardSetCANConfig(&hcan1, "CAN1");
+    bspBoardCANInstancePtrArray[BSP_CAN_1] = bspCANInit(&can_config);
+}
+
+bspCANInstance_t *bspBoardGetCANInstance(bspCANId_e can_id)
+{
+    if (can_id >= BSP_CAN_MAX) {
+        return NULL;
+    }
+
+    return bspBoardCANInstancePtrArray[can_id];
+}
+
+//
 // BOARD
 //
 void bspBoardInit()
@@ -150,4 +183,5 @@ void bspBoardInit()
     bspBoardGPIOInit();
     bspBoardUARTInit();
     bspBoardSPIInit();
+    bspBoardCANInit();
 }

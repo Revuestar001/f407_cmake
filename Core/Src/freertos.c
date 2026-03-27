@@ -351,3 +351,4 @@ static bspSPIStatus_e BMI088RunSmokeTest(bspSPIInstance_t *spi,
   return BSP_SPI_OK;
 }
 /* USER CODE END Application */
+
