@@ -102,6 +102,14 @@ static void bspBoardUARTInit()
                                         BSP_UART_RX_BUFFER_SIZE, 
                                         "PRINT");
     bspBoardUARTInstancePtrArray[BSP_UART_PRINT] = bspUARTInit(&uart_config);
+
+    uart_config = bspBoardSetUARTConfig(&UART_SBUS, 
+                                        BSP_UART_RX_MODE_DMA_IDLE, 
+                                        BSP_UART_TX_MODE_IT, 
+                                        &bspUARTRxBuffer[BSP_UART_SBUS][0],
+                                        BSP_UART_RX_BUFFER_SIZE, 
+                                        "PRINT");
+    bspBoardUARTInstancePtrArray[BSP_UART_SBUS] = bspUARTInit(&uart_config);
 }
 
 bspUARTInstance_t *bspBoardGetUARTInstance(bspUARTId_e uart_id)

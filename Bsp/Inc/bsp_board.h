@@ -22,6 +22,7 @@ bspGPIOInstance_t *bspBoardGetGPIOInstance(bspGPIOId_e gpio_id);
 typedef enum 
 {
     BSP_UART_PRINT = 0,
+    BSP_UART_SBUS,
     BSP_UART_MAX
 } bspUARTId_e;
 
