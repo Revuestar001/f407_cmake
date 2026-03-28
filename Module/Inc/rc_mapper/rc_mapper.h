@@ -52,7 +52,9 @@ typedef struct rc_mapper
 } moduleRCMapper_t;
 
 void moduleRCMapperInit(moduleRCMapper_t *instance);
+
 bool moduleRCMapperUpdateFromSBUSFrame(moduleRCMapper_t *instance, const protocolSBUSDataFrame_t *sbus_frame);
+
 bool moduleRCMapperSwitchStateChanged(const moduleRCSwitch_t *switch_instance);
 moduleRCMapperSwitchEdge_e moduleRCMapperSwitchGetEdge(const moduleRCSwitch_t *switch_instance);
 bool moduleRCMapperSwitchEdgeMatched(const moduleRCSwitch_t *switch_instance, moduleRCMapperSwitchEdge_e edge);

@@ -51,8 +51,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/bsp_can/bsp_can.c
     Bsp/Src/bsp_board.c
 
-    Module/Src/Util/ring_buffer.c
-    Module/Src/Protocol/sbus.c
+    Module/Src/util/ring_buffer.c
+    Module/Src/protocol/sbus.c
     Module/Src/rc_mapper/rc_mapper.c
 )
 
@@ -65,8 +65,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Inc/bsp_can
     Bsp/Inc/
 
-    Module/Inc/Util/
-    Module/Inc/Protocol/
+    Module/Inc/util/
+    Module/Inc/protocol/
     Module/Inc/rc_mapper/
 )
 
