@@ -149,10 +149,8 @@ void StartRemoteControlTask(void *argument)
   remote_control_task_stack_high_water_mark_ = uxTaskGetStackHighWaterMark(NULL);
 
   for (;;) {
-    bool update_success = appRemoteControlUpdate(portMAX_DELAY);
-    if (update_success == true) {
-      moduleRCMapper_t rc = appRemoteControlGetRCMapped();
-    }
+    // 无限阻塞不合理，超时10ms认为lost
+    (void)appRemoteControlUpdate(pdMS_TO_TICKS(10));
 
     {
       UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
@@ -167,4 +165,3 @@ void StartRemoteControlTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 /* USER CODE END Application */
-
