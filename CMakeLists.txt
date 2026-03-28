@@ -55,7 +55,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/protocol/sbus.c
     Module/Src/rc_mapper/rc_mapper.c
 
-    Application/Src/remote_control/task_remote_control.c
+    Application/Src/remote_control/app_remote_control.c
 )
 
 # Add include paths

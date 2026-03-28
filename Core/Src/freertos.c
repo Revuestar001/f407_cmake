@@ -26,7 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "task_remote_control.h"
+#include "app_remote_control.h"
 #include <stdbool.h>
 #include <stdint.h>
 /* USER CODE END Includes */
@@ -61,13 +61,6 @@ const osThreadAttr_t remoteControlTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 
-int16_t stick_left_x = 0;
-int16_t stick_left_y = 0;
-int16_t stick_right_x = 0;
-int16_t stick_right_y = 0;
-
-moduleRCSwitch_t switch_left = {0};
-moduleRCSwitch_t switch_right = {0};
 volatile UBaseType_t remote_control_task_stack_high_water_mark_ = 0;
 volatile UBaseType_t remote_control_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
 
@@ -152,22 +145,15 @@ void StartRemoteControlTask(void *argument)
   /* USER CODE BEGIN StartRemoteControlTask */
   (void)argument;
 
-  taskRemoteControlInit();
+  appRemoteControlInit();
   remote_control_task_stack_high_water_mark_ = uxTaskGetStackHighWaterMark(NULL);
 
   for (;;) {
-    bool update_success = taskRemoteControlUpdate(portMAX_DELAY);
+    bool update_success = appRemoteControlUpdate(portMAX_DELAY);
     if (update_success == true) {
-      const moduleRCMapper_t *rc = taskRemoteControlGetRCMapped();
-
-      stick_left_x = rc->stick_left_x_;
-      stick_left_y = rc->stick_left_y_;
-      stick_right_x = rc->stick_right_x_;
-      stick_right_y = rc->stick_right_y_;
-
-      switch_left = rc->switch_left_;
-      switch_right = rc->switch_right_;
+      moduleRCMapper_t rc = appRemoteControlGetRCMapped();
     }
+
     {
       UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
       if (stack_high_water_mark < remote_control_task_stack_high_water_mark_min_) {

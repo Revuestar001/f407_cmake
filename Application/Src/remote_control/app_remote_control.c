@@ -7,10 +7,10 @@
 
 #include "bsp_board.h"
 #include "bsp_uart.h"
-#include "task_remote_control.h"
+#include "app_remote_control.h"
 #include "sbus.h"
 
-typedef struct task_remote_control
+typedef struct app_remote_control
 {
     bspUARTInstance_t *uart_instance_;
     StreamBufferHandle_t stream_buffer_handle_;
@@ -21,9 +21,9 @@ typedef struct task_remote_control
 
     protocolSBUSDataPraser_t sbus_praser_;
     moduleRCMapper_t rc_mapper_;
-} taskRemoteControlInstance_t;
+} appRemoteControlInstance_t;
 
-static taskRemoteControlInstance_t task_instance_ = {0};
+static appRemoteControlInstance_t app_instance_ = {0};
 
 // stream buffer
 // 请注意，stream buffer的大小+2(stream buffer实际容量)不能比底层bsp_uart的DMA缓冲区小，否则会造成字节丢失
@@ -32,7 +32,7 @@ static StaticStreamBuffer_t stream_buffer_struct_;
 
 #define UPDATE_TEMP_BUFFER_SIZE PROTOCOL_SBUS_FRAME_SIZE
 
-static void taskRemoteControlSendSegmentToBufferFromISR(taskRemoteControlInstance_t *instance,
+static void appRemoteControlSendSegmentToBufferFromISR(appRemoteControlInstance_t *instance,
                                                         uint8_t *rx_buffer_ptr,
                                                         uint16_t rx_buffer_size,
                                                         uint16_t rx_data_start_index,
@@ -66,14 +66,14 @@ static void taskRemoteControlSendSegmentToBufferFromISR(taskRemoteControlInstanc
 }
 
 // 在中断中
-static void taskRemoteControlSendDataToBuffer(void *owner_ptr,
+static void appRemoteControlSendDataToBuffer(void *owner_ptr,
                                               uint8_t *rx_buffer_ptr,
                                               uint16_t rx_buffer_size,
                                               uint16_t rx_data_start_index,
                                               uint16_t rx_data_end_pos,
                                               bspUARTRxEventType_e rx_event)
 {
-    taskRemoteControlInstance_t *instance = (taskRemoteControlInstance_t *)owner_ptr;
+    appRemoteControlInstance_t *instance = (appRemoteControlInstance_t *)owner_ptr;
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     (void)rx_event;
@@ -83,20 +83,20 @@ static void taskRemoteControlSendDataToBuffer(void *owner_ptr,
     }
 
     if (rx_data_start_index < rx_data_end_pos) {
-        taskRemoteControlSendSegmentToBufferFromISR(instance,
+        appRemoteControlSendSegmentToBufferFromISR(instance,
                                                     rx_buffer_ptr,
                                                     rx_buffer_size,
                                                     rx_data_start_index,
                                                     rx_data_end_pos,
                                                     &xHigherPriorityTaskWoken);
     } else if (rx_data_start_index > rx_data_end_pos) {
-        taskRemoteControlSendSegmentToBufferFromISR(instance,
+        appRemoteControlSendSegmentToBufferFromISR(instance,
                                                     rx_buffer_ptr,
                                                     rx_buffer_size,
                                                     rx_data_start_index,
                                                     rx_buffer_size,
                                                     &xHigherPriorityTaskWoken);
-        taskRemoteControlSendSegmentToBufferFromISR(instance,
+        appRemoteControlSendSegmentToBufferFromISR(instance,
                                                     rx_buffer_ptr,
                                                     rx_buffer_size,
                                                     0U,
@@ -110,36 +110,36 @@ static void taskRemoteControlSendDataToBuffer(void *owner_ptr,
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
-void taskRemoteControlInit(void)
+void appRemoteControlInit(void)
 {
-    memset(&task_instance_, 0, sizeof(taskRemoteControlInstance_t));
+    memset(&app_instance_, 0, sizeof(appRemoteControlInstance_t));
 
-    task_instance_.uart_instance_ = bspBoardGetUARTInstance(BSP_UART_SBUS);
-    if (task_instance_.uart_instance_ == NULL) {
+    app_instance_.uart_instance_ = bspBoardGetUARTInstance(BSP_UART_SBUS);
+    if (app_instance_.uart_instance_ == NULL) {
         return;
     }
 
     // 触发字节数先只给1
     // 实际容量还要再减1
-    task_instance_.stream_buffer_handle_ = xStreamBufferCreateStatic(sizeof(stream_buffer_) - 1U,
+    app_instance_.stream_buffer_handle_ = xStreamBufferCreateStatic(sizeof(stream_buffer_) - 1U,
                                                                      1U,
                                                                      stream_buffer_,
                                                                      &stream_buffer_struct_);
-    if (task_instance_.stream_buffer_handle_ == NULL) {
+    if (app_instance_.stream_buffer_handle_ == NULL) {
         return;
     }
 
-    protocolSBUSPraserInit(&task_instance_.sbus_praser_);
-    moduleRCMapperInit(&task_instance_.rc_mapper_);
+    protocolSBUSPraserInit(&app_instance_.sbus_praser_);
+    moduleRCMapperInit(&app_instance_.rc_mapper_);
 
-    bspUARTRxEventCallbackRegister(task_instance_.uart_instance_,
-                                   (void *)&task_instance_,
-                                   taskRemoteControlSendDataToBuffer);
-    (void)bspUARTRxStart(task_instance_.uart_instance_);
+    bspUARTRxEventCallbackRegister(app_instance_.uart_instance_,
+                                   (void *)&app_instance_,
+                                   appRemoteControlSendDataToBuffer);
+    (void)bspUARTRxStart(app_instance_.uart_instance_);
 }
 
 // 返回是否成功更新一帧RC指令
-bool taskRemoteControlUpdate(TickType_t timeout_tick)
+bool appRemoteControlUpdate(TickType_t timeout_tick)
 {
     // 临时缓冲数组
     uint8_t rx_buffer[UPDATE_TEMP_BUFFER_SIZE] = {0};
@@ -148,7 +148,7 @@ bool taskRemoteControlUpdate(TickType_t timeout_tick)
     protocolSBUSFeedResult_e feed_result;
     bool update_success = false;
 
-    if (task_instance_.stream_buffer_handle_ == NULL) {
+    if (app_instance_.stream_buffer_handle_ == NULL) {
         return false;
     }
 
@@ -156,7 +156,7 @@ bool taskRemoteControlUpdate(TickType_t timeout_tick)
     while (true) {
         // 第一次读取阻塞读取StreamBuffer
         // 一次最大只能读出临时数组大小
-        rx_data_length_actual = (uint16_t)xStreamBufferReceive(task_instance_.stream_buffer_handle_,
+        rx_data_length_actual = (uint16_t)xStreamBufferReceive(app_instance_.stream_buffer_handle_,
                                                                rx_buffer,
                                                                sizeof(rx_buffer),
                                                                timeout_tick);
@@ -166,12 +166,12 @@ bool taskRemoteControlUpdate(TickType_t timeout_tick)
             break;
         }
 
-        feed_result = protocolSBUSPraserFeedBufferLastFrame(&task_instance_.sbus_praser_,
+        feed_result = protocolSBUSPraserFeedBufferLastFrame(&app_instance_.sbus_praser_,
                                                             rx_buffer,
                                                             rx_data_length_actual,
                                                             &rx_sbus_frame);
         if (feed_result == PROTOCOL_SBUS_FEED_FRAME_OK) {
-            moduleRCMapperUpdateFromSBUSFrame(&task_instance_.rc_mapper_, &rx_sbus_frame);
+            moduleRCMapperUpdateFromSBUSFrame(&app_instance_.rc_mapper_, &rx_sbus_frame);
             update_success = true;
         }
 
@@ -182,7 +182,7 @@ bool taskRemoteControlUpdate(TickType_t timeout_tick)
     return update_success;
 }
 
-const moduleRCMapper_t *taskRemoteControlGetRCMapped(void)
+moduleRCMapper_t appRemoteControlGetRCMapped(void)
 {
-    return &task_instance_.rc_mapper_;
+    return app_instance_.rc_mapper_;
 }
