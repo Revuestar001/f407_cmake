@@ -19,12 +19,16 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
+#include "rc_mapper.h"
 #include "task.h"
 #include "main.h"
 #include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "task_remote_control.h"
+#include <stdbool.h>
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,9 +53,25 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for remoteControlTask */
+osThreadId_t remoteControlTaskHandle;
+const osThreadAttr_t remoteControlTask_attributes = {
+  .name = "remoteControlTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+
+int16_t stick_left_x = 0;
+int16_t stick_left_y = 0;
+int16_t stick_right_x = 0;
+int16_t stick_right_y = 0;
+
+moduleRCSwitch_t switch_left = {0};
+moduleRCSwitch_t switch_right = {0};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+void StartRemoteControlTask(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -87,6 +107,8 @@ void MX_FREERTOS_Init(void) {
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  /* creation of remoteControlTask */
+  remoteControlTaskHandle = osThreadNew(StartRemoteControlTask, NULL, &remoteControlTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -114,6 +136,37 @@ void StartDefaultTask(void *argument)
     osDelay(1000);
   }
   /* USER CODE END StartDefaultTask */
+}
+
+/* USER CODE BEGIN Header_StartRemoteControlTask */
+/**
+  * @brief  Function implementing the remoteControlTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartRemoteControlTask */
+void StartRemoteControlTask(void *argument)
+{
+  /* USER CODE BEGIN StartRemoteControlTask */
+  (void)argument;
+
+  taskRemoteControlInit();
+
+  for (;;) {
+    bool update_success = taskRemoteControlUpdate(portMAX_DELAY);
+    if (update_success == true) {
+      const moduleRCMapper_t *rc = taskRemoteControlGetRCMapped();
+
+      stick_left_x = rc->stick_left_x_;
+      stick_left_y = rc->stick_left_y_;
+      stick_right_x = rc->stick_right_x_;
+      stick_right_y = rc->stick_right_y_;
+
+      switch_left = rc->switch_left_;
+      switch_right = rc->switch_right_;
+    }
+  }
+  /* USER CODE END StartRemoteControlTask */
 }
 
 /* Private application code --------------------------------------------------*/

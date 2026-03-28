@@ -54,6 +54,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/util/ring_buffer.c
     Module/Src/protocol/sbus.c
     Module/Src/rc_mapper/rc_mapper.c
+
+    Application/Src/remote_control/task_remote_control.c
 )
 
 # Add include paths
@@ -68,6 +70,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/util/
     Module/Inc/protocol/
     Module/Inc/rc_mapper/
+
+    Application/Inc/remote_control
 )
 
 # Add project symbols (macros)
