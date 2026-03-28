@@ -68,6 +68,8 @@ int16_t stick_right_y = 0;
 
 moduleRCSwitch_t switch_left = {0};
 moduleRCSwitch_t switch_right = {0};
+volatile UBaseType_t remote_control_task_stack_high_water_mark_ = 0;
+volatile UBaseType_t remote_control_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -151,6 +153,7 @@ void StartRemoteControlTask(void *argument)
   (void)argument;
 
   taskRemoteControlInit();
+  remote_control_task_stack_high_water_mark_ = uxTaskGetStackHighWaterMark(NULL);
 
   for (;;) {
     bool update_success = taskRemoteControlUpdate(portMAX_DELAY);
@@ -165,6 +168,12 @@ void StartRemoteControlTask(void *argument)
       switch_left = rc->switch_left_;
       switch_right = rc->switch_right_;
     }
+    {
+      UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
+      if (stack_high_water_mark < remote_control_task_stack_high_water_mark_min_) {
+        remote_control_task_stack_high_water_mark_min_ = stack_high_water_mark;
+      }
+    }
   }
   /* USER CODE END StartRemoteControlTask */
 }
@@ -172,3 +181,4 @@ void StartRemoteControlTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 /* USER CODE END Application */
+
