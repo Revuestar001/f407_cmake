@@ -267,9 +267,10 @@ static bool deviceBMI088ConfigAccel(deviceBMI088Instance_t *instance)
 
     bool state = true;
 
+    // 把 accel 的 power-save / filter配置切到 active
     state &= deviceBMI088WriteSingleRegister(instance, DEVICE_BMI088_TARGET_ACCEL, ACC_PWR_CONF_ADDR, ACC_PWR_CONF_ACT);
     deviceBMI088DelayUs(instance, DEVICE_BMI088_POWER_MODE_SWITCH_DELAY_US);
-
+    // 让 accel 进入正常工作、开始正常出数
     state &= deviceBMI088WriteSingleRegister(instance, DEVICE_BMI088_TARGET_ACCEL, ACC_PWR_CTRL_ADDR, ACC_PWR_CTRL_ON);
     deviceBMI088DelayUs(instance, DEVICE_BMI088_POWER_MODE_SWITCH_DELAY_US);
 
