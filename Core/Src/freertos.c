@@ -19,6 +19,9 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
+#include "bsp_gpio.h"
+#include "portmacro.h"
+#include "projdefs.h"
 #include "rc_mapper.h"
 #include "task.h"
 #include "main.h"
@@ -76,6 +79,15 @@ volatile UBaseType_t remote_control_task_stack_high_water_mark_min_ = 0xFFFFFFFF
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 void StartRemoteControlTask(void *argument);
+
+void bmi088GyroITCallback(void *owner)
+{
+  (void)owner;
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  vTaskNotifyGiveFromISR(defaultTaskHandle, &xHigherPriorityTaskWoken);
+
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -140,6 +152,7 @@ void StartDefaultTask(void *argument)
     .spi_instance_ = bspBoardGetSPIInstance(BSP_SPI_IMU),
     .accel_cs_ = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_ACCEL),
     .gyro_cs_ = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_GYRO),
+    .mode_ = DEVICE_BMI088_EXIT,
     .delay_us_callback_ = bspDWTDelayUs,
     .name_ = "BMI088_TEST",
   };
@@ -151,9 +164,15 @@ void StartDefaultTask(void *argument)
     }
   }
 
+  bspGPIOInstance_t *int3 = bspBoardGetGPIOInstance(BSP_GPIO_IMU_INT1_GYRO);
+  bspGPIOIsrCallbackRegister(int3, (void *)NULL, bmi088GyroITCallback);
+
   bmi088_test_init_status_ = deviceBMI088Init((deviceBMI088Instance_t *)bmi088_test_instance_);
+  bmi088_test_init_status_ &= deviceBMI088ConfigGyroDataReadyIT((deviceBMI088Instance_t *)bmi088_test_instance_);
 
   for (;;) {
+    (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
     if (bmi088_test_init_status_ == DEVICE_BMI088_OK) {
       deviceBMI088Data_t data = {0};
 
@@ -167,7 +186,7 @@ void StartDefaultTask(void *argument)
       }
     }
 
-    osDelay(10);
+    // osDelay(10);
   }
   /* USER CODE END StartDefaultTask */
 }

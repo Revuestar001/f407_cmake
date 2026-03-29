@@ -18,6 +18,13 @@ typedef enum
 
 typedef enum
 {
+    DEVICE_BMI088_BLOCKING = 0,
+    DEVICE_BMI088_EXIT,
+    DEVICE_BMI088_EXIT_DMA,
+} deviceBMI088Mode_e;
+
+typedef enum
+{
     DEVICE_BMI088_NO_ERROR = 0x00,
     DEVICE_BMI088_ACC_PWR_CTRL_ERROR = 0x01,
     DEVICE_BMI088_ACC_PWR_CONF_ERROR = 0x02,
@@ -48,6 +55,8 @@ typedef struct device_bmi088_config
     bspGPIOInstance_t *accel_cs_;
     bspGPIOInstance_t *gyro_cs_;
 
+    deviceBMI088Mode_e mode_;
+
     deviceBMI088DelayUsCallback_f delay_us_callback_;
 
     const char *name_;
@@ -73,3 +82,5 @@ deviceBMI088Status_e deviceBMI088Init(deviceBMI088Instance_t *instance);
 deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance);
 // 获取当前传感器数据
 deviceBMI088Status_e deviceBMI088GetData(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out);
+// 配置bmi088的gyro数据就绪中断
+deviceBMI088Status_e deviceBMI088ConfigGyroDataReadyIT(deviceBMI088Instance_t *instance);

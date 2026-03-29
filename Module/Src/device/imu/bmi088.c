@@ -34,6 +34,8 @@ typedef struct device_bmi088
     bspGPIOInstance_t *accel_cs_;
     bspGPIOInstance_t *gyro_cs_;
 
+    deviceBMI088Mode_e mode_;
+
     deviceBMI088DelayUsCallback_f delay_us_callback_;
 
     const char *name_;
@@ -315,6 +317,7 @@ deviceBMI088Instance_t *deviceBMI088InstanceInit(const deviceBMI088Config_t *con
     instance->spi_instance_ = config->spi_instance_;
     instance->accel_cs_ = config->accel_cs_;
     instance->gyro_cs_ = config->gyro_cs_;
+    instance->mode_ = config->mode_;
     instance->delay_us_callback_ = config->delay_us_callback_;
     instance->name_ = config->name_;
     instance->is_initialized_ = false;
@@ -433,6 +436,53 @@ deviceBMI088Status_e deviceBMI088GetData(const deviceBMI088Instance_t *instance,
     }
 
     *data_out = instance->data_;
+
+    return DEVICE_BMI088_OK;
+}
+
+// 配置bmi088的gyro数据就绪中断
+deviceBMI088Status_e deviceBMI088ConfigGyroDataReadyIT(deviceBMI088Instance_t *instance)
+{
+    if (instance == NULL) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    if (instance->mode_ == DEVICE_BMI088_BLOCKING) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    bool state = true;
+
+    // 官方流程是先映射再配置电气化，最后使能中断
+    // 不过经过测试，先配置电气化再映射也可以
+    // 将gyro的数据准备完成中断映射到INT3
+    state &= deviceBMI088WriteSingleRegister(instance, 
+                                            DEVICE_BMI088_TARGET_GYRO, 
+                                            GYRO_INT3_INT4_IO_MAP_ADDR, 
+                                            GYRO_INT3_INT4_IO_MAP_IT_INT3_VAL);
+    if (state == false) {
+        return DEVICE_BMI088_ERROR;
+    }
+    deviceBMI088DelayUs(instance, 2U);
+
+    // 将gyro的数据准备完成中断配置为INT3推挽输出、低电平有效
+    state &= deviceBMI088WriteSingleRegister(instance, 
+                                            DEVICE_BMI088_TARGET_GYRO, 
+                                            GYRO_INT3_INT4_IO_CONF_ADDR, 
+                                            GYRO_INT3_INT4_IO_CONF_INT3_PP_ACTIVE_LOW_VAL);
+    if (state == false) {
+        return DEVICE_BMI088_ERROR;
+    }
+    deviceBMI088DelayUs(instance, 2U);
+
+    // 使能gyro的数据准备完成中断
+    state &= deviceBMI088WriteSingleRegister(instance, 
+                                            DEVICE_BMI088_TARGET_GYRO, 
+                                            GYRO_INT_CTRL_ADDR, 
+                                            GYRO_INT_CTRL_IT_ENABLE_VAL);
+    if (state == false) {
+        return DEVICE_BMI088_ERROR;
+    }
 
     return DEVICE_BMI088_OK;
 }
