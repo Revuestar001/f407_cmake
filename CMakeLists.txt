@@ -49,11 +49,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/bsp_uart/bsp_uart.c
     Bsp/Src/bsp_spi/bsp_spi.c
     Bsp/Src/bsp_can/bsp_can.c
+    Bsp/Src/bsp_dwt/bsp_dwt.c
     Bsp/Src/bsp_board.c
 
     Module/Src/util/ring_buffer.c
     Module/Src/protocol/sbus.c
     Module/Src/rc_mapper/rc_mapper.c
+    Module/Src/device/imu/bmi088.c
 
     Application/Src/remote_control/app_remote_control.c
 )
@@ -65,11 +67,13 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Inc/bsp_uart
     Bsp/Inc/bsp_spi
     Bsp/Inc/bsp_can
+    Bsp/Inc/bsp_dwt
     Bsp/Inc/
 
     Module/Inc/util/
     Module/Inc/protocol/
     Module/Inc/rc_mapper/
+    Module/Inc/device/imu/
 
     Application/Inc/remote_control
 )

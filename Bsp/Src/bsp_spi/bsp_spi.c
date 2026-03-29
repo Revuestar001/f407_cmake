@@ -136,9 +136,114 @@ bspSPIStatus_e bspSPITransmitReceive(bspSPIInstance_t *instance, uint8_t *tx_buf
     return bspSPIGetStatusFromHAL(status_hal);
 }
 
+// IT 和DMA模式下，传输完成会触发回调函数
+bspSPIStatus_e bspSPITransmit(bspSPIInstance_t *instance, uint8_t *tx_buffer, uint16_t data_size)
+{
+    if (instance == NULL || 
+        instance->spi_handle_ == NULL || 
+        tx_buffer == NULL ||  
+        data_size == 0) {
+        return BSP_SPI_ERROR;
+    }
+
+    // 不为ready状态，认为该spi外设正忙
+    if (instance->spi_handle_->State != HAL_SPI_STATE_READY) {
+        return BSP_SPI_BUSY;
+    }
+
+    HAL_StatusTypeDef status_hal;
+
+    // CS信号由owner决定，这里不进行CS操作
+    switch (instance->spi_work_mode_) {
+        case BSP_SPI_WORK_MODE_BLOCKING:
+            status_hal = HAL_SPI_Transmit(instance->spi_handle_, tx_buffer, data_size, BSP_SPI_BLOCKING_TIMEOUT);
+            return bspSPIGetStatusFromHAL(status_hal);
+        case BSP_SPI_WORK_MODE_IT:
+            status_hal = HAL_SPI_Transmit_IT(instance->spi_handle_, tx_buffer, data_size);
+            break;
+        case BSP_SPI_WORK_MODE_DMA:
+            status_hal = HAL_SPI_Transmit_DMA(instance->spi_handle_, tx_buffer, data_size);
+            break;
+        default:
+            return BSP_SPI_ERROR;
+    }
+
+    if (status_hal == HAL_OK) {
+        // 成功开启异步传输后，保存本次传输任务的缓冲区信息
+        // IT DMA传输开启后，该函数返回
+        // 一次传输完成后，触发回调，spi实例调用owner回调函数
+        // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+        instance->tx_buffer_ptr_this_transfer_ = tx_buffer;
+        instance->rx_buffer_ptr_this_transfer_ = NULL;
+        instance->data_size_this_transfer_ = data_size;
+    }
+
+    return bspSPIGetStatusFromHAL(status_hal);
+}
+
+// IT 和DMA模式下，传输完成会触发回调函数
+bspSPIStatus_e bspSPIReceive(bspSPIInstance_t *instance, uint8_t *rx_buffer, uint16_t data_size)
+{
+    if (instance == NULL || 
+        instance->spi_handle_ == NULL || 
+        rx_buffer == NULL || 
+        data_size == 0) {
+        return BSP_SPI_ERROR;
+    }
+
+    // 不为ready状态，认为该spi外设正忙
+    if (instance->spi_handle_->State != HAL_SPI_STATE_READY) {
+        return BSP_SPI_BUSY;
+    }
+
+    HAL_StatusTypeDef status_hal;
+
+    // CS信号由owner决定，这里不进行CS操作
+    switch (instance->spi_work_mode_) {
+        case BSP_SPI_WORK_MODE_BLOCKING:
+            status_hal = HAL_SPI_Receive(instance->spi_handle_, rx_buffer, data_size, BSP_SPI_BLOCKING_TIMEOUT);
+            return bspSPIGetStatusFromHAL(status_hal);
+        case BSP_SPI_WORK_MODE_IT:
+            status_hal = HAL_SPI_Receive_IT(instance->spi_handle_, rx_buffer, data_size);
+            break;
+        case BSP_SPI_WORK_MODE_DMA:
+            status_hal = HAL_SPI_Receive_DMA(instance->spi_handle_, rx_buffer, data_size);
+            break;
+        default:
+            return BSP_SPI_ERROR;
+    }
+
+    if (status_hal == HAL_OK) {
+        // 成功开启异步传输后，保存本次传输任务的缓冲区信息
+        // IT DMA传输开启后，该函数返回
+        // 一次传输完成后，触发回调，spi实例调用owner回调函数
+        // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+        instance->tx_buffer_ptr_this_transfer_ = NULL;
+        instance->rx_buffer_ptr_this_transfer_ = rx_buffer;
+        instance->data_size_this_transfer_ = data_size;
+    }
+
+    return bspSPIGetStatusFromHAL(status_hal);
+}
+
 bool bspSPITxRxIsBusy(bspSPIInstance_t *instance)
 {
     return instance->spi_handle_->State == HAL_SPI_STATE_BUSY_TX_RX;
+}
+
+bspSPIStatus_e bspSPIChangeWorkMode(bspSPIInstance_t *instance, bspSPIWorkMode_e new_mode)
+{
+    if (instance == NULL) {
+        return BSP_SPI_ERROR;
+    }
+
+    if (instance->spi_handle_->State != HAL_SPI_STATE_READY) {
+        return BSP_SPI_BUSY;
+    }
+
+    instance->spi_work_mode_ = new_mode;
+
+    return BSP_SPI_OK;
 }
 
 // IT 和DMA模式下，传输完成会触发回调函数

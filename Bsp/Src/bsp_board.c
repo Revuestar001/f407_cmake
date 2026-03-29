@@ -10,6 +10,7 @@
 #include "bsp_uart_private.h"
 #include "bsp_spi_private.h"
 #include "bsp_can_private.h"
+#include "bsp_dwt.h"
 
 // 储存所有GPIO实例的指针
 static bspGPIOInstance_t *bspBoardGPIOInstancePtrArray[BSP_GPIO_MAX] = {NULL};
@@ -188,6 +189,8 @@ bspCANInstance_t *bspBoardGetCANInstance(bspCANId_e can_id)
 //
 void bspBoardInit()
 {
+    bspDWTInit();
+
     bspBoardGPIOInit();
     bspBoardUARTInit();
     bspBoardSPIInit();

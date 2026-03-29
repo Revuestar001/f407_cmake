@@ -6,14 +6,6 @@
 #include "bsp_def.h"
 #include "bsp_spi.h"
 
-
-typedef enum
-{
-    BSP_SPI_WORK_MODE_BLOCKING = 0,
-    BSP_SPI_WORK_MODE_IT,
-    BSP_SPI_WORK_MODE_DMA
-} bspSPIWorkMode_e;
-
 typedef struct spi_config
 {
     SPI_HandleTypeDef *spi_handle_;

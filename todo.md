@@ -175,7 +175,7 @@ App 解决“机器人现在该做什么”。
 如果你愿意，我下一步可以直接按你这个仓库现状，给你列一个具体目录树 + 每个 .h/.c 文件名 + 每个模块最小接口，这样你可以直接开工。
 
 ---
-
+5.
 BSP UART ISR callback
 -> App remote service callback
 -> 写 ring buffer / stream buffer
@@ -206,3 +206,4 @@ rc_input 只做映射
 App control 才决定机器人干什么
 你只要先守住这个，就不会乱。
 
+6.rc_mapper的开关边沿检测逻辑还要改，因为边沿状态就保存一瞬间
