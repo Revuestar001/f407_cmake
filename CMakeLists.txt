@@ -58,6 +58,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/device/imu/bmi088.c
 
     Application/Src/remote_control/app_remote_control.c
+    Application/Src/imu/app_imu.c
 )
 
 # Add include paths
@@ -75,7 +76,9 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/rc_mapper/
     Module/Inc/device/imu/
 
-    Application/Inc/remote_control
+    Application/Inc/remote_control/
+    Application/Inc/imu/
+    Application/Inc/
 )
 
 # Add project symbols (macros)

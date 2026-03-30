@@ -1,4 +1,4 @@
-#include <stdbool.h>
+﻿#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -14,7 +14,7 @@
 #define DEVICE_BMI088_BUS_IDLE_DELAY_US           10U
 #define DEVICE_BMI088_POWER_ON_DELAY_US           30000U
 #define DEVICE_BMI088_POWER_MODE_SWITCH_DELAY_US  450U
-#define DEVICE_BMI088_ACCEL_CONF_DEFAULT          0xA8U
+#define DEVICE_BMI088_ACCEL_CONF_DEFAULT          0xAAU // 注意这个是normal滤波+400Hz更新，不是默认配置
 #define DEVICE_BMI088_ACCEL_SENSITIVITY_6G        (32768.0f / 6.0f)
 #define DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS    16.384f
 #define DEVICE_BMI088_STANDARD_GRAVITY_M_S2       9.80665f
@@ -50,6 +50,7 @@ typedef struct device_bmi088
 static uint8_t bmi088_memory_index_ = 0;
 static deviceBMI088Instance_t bmi088_instance_memory_[DEVICE_BMI088_MAX_INSTANCE_NUM];
 
+// 请注意，最好不要在非初始化阶段调用延时函数
 static void deviceBMI088DelayUs(deviceBMI088Instance_t *instance, uint32_t time_us)
 {
     if (instance == NULL || instance->delay_us_callback_ == NULL || time_us == 0U) {
@@ -292,7 +293,7 @@ static bool deviceBMI088ConfigGyro(deviceBMI088Instance_t *instance)
     bool state = true;
 
     state &= deviceBMI088WriteSingleRegister(instance, DEVICE_BMI088_TARGET_GYRO, GYRO_RANGE_ADDR, GYRO_RANGE_2000_DEG_S);
-    state &= deviceBMI088WriteSingleRegister(instance, DEVICE_BMI088_TARGET_GYRO, GYRO_BANDWIDTH_ADDR, GYRO_ODR_2000Hz_BANDWIDTH_532Hz);
+    state &= deviceBMI088WriteSingleRegister(instance, DEVICE_BMI088_TARGET_GYRO, GYRO_BANDWIDTH_ADDR, GYRO_ODR_400Hz_BANDWIDTH_47Hz);
 
     return state;
 }
@@ -418,13 +419,13 @@ deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance)
     instance->data_.gyro_raw_[2] = gyro_raw[2];
 
     // 当前换算系数对应 init() 里固定写入的量程配置，accel_单位为m/s^2，gyro_单位为rad/s
-    instance->data_.accel_[0] = ((float)accel_raw[0] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
-    instance->data_.accel_[1] = ((float)accel_raw[1] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
-    instance->data_.accel_[2] = ((float)accel_raw[2] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
+    instance->data_.accel_ms2_[0] = ((float)accel_raw[0] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
+    instance->data_.accel_ms2_[1] = ((float)accel_raw[1] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
+    instance->data_.accel_ms2_[2] = ((float)accel_raw[2] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
 
-    instance->data_.gyro_[0] = ((float)gyro_raw[0] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
-    instance->data_.gyro_[1] = ((float)gyro_raw[1] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
-    instance->data_.gyro_[2] = ((float)gyro_raw[2] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
+    instance->data_.gyro_rads_[0] = ((float)gyro_raw[0] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
+    instance->data_.gyro_rads_[1] = ((float)gyro_raw[1] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
+    instance->data_.gyro_rads_[2] = ((float)gyro_raw[2] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
 
     return DEVICE_BMI088_OK;
 }
@@ -483,6 +484,17 @@ deviceBMI088Status_e deviceBMI088ConfigGyroDataReadyIT(deviceBMI088Instance_t *i
     if (state == false) {
         return DEVICE_BMI088_ERROR;
     }
+
+    return DEVICE_BMI088_OK;
+}
+
+deviceBMI088Status_e deviceBMI088GetMode(deviceBMI088Instance_t *instance, deviceBMI088Mode_e *mode_out)
+{
+    if (instance == NULL) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    *mode_out = instance->mode_;
 
     return DEVICE_BMI088_OK;
 }

@@ -19,22 +19,14 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "bsp_gpio.h"
-#include "portmacro.h"
-#include "projdefs.h"
-#include "rc_mapper.h"
+#include "cmsis_os2.h"
 #include "task.h"
-#include "main.h"
 #include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "app_remote_control.h"
-#include "bmi088.h"
-#include "bsp_board.h"
-#include "bsp_dwt.h"
-#include <stdbool.h>
-#include <stdint.h>
+#include "app_imu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,20 +43,6 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-volatile deviceBMI088Instance_t *bmi088_test_instance_ = NULL;
-volatile deviceBMI088Status_e bmi088_test_init_status_ = DEVICE_BMI088_ERROR;
-volatile deviceBMI088Status_e bmi088_test_update_status_ = DEVICE_BMI088_ERROR;
-volatile deviceBMI088Status_e bmi088_test_get_status_ = DEVICE_BMI088_ERROR;
-volatile uint32_t bmi088_test_update_count_ = 0U;
-volatile deviceBMI088Data_t bmi088_test_data_ = {0};
-/* USER CODE END Variables */
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
 /* Definitions for remoteControlTask */
 osThreadId_t remoteControlTaskHandle;
 const osThreadAttr_t remoteControlTask_attributes = {
@@ -76,18 +54,26 @@ const osThreadAttr_t remoteControlTask_attributes = {
 volatile UBaseType_t remote_control_task_stack_high_water_mark_ = 0;
 volatile UBaseType_t remote_control_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
 
+osThreadId_t appIMUTaskHandle;
+const osThreadAttr_t imuTask_attributes = {
+  .name = "imuTask_",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+volatile UBaseType_t imu_task_stack_high_water_mark_ = 0;
+volatile UBaseType_t imu_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
+/* USER CODE END Variables */
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+const osThreadAttr_t defaultTask_attributes = {
+  .name = "defaultTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 void StartRemoteControlTask(void *argument);
-
-void bmi088GyroITCallback(void *owner)
-{
-  (void)owner;
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  vTaskNotifyGiveFromISR(defaultTaskHandle, &xHigherPriorityTaskWoken);
-
-  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-}
+void StartIMUTask(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -125,7 +111,7 @@ void MX_FREERTOS_Init(void) {
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
   /* creation of remoteControlTask */
   remoteControlTaskHandle = osThreadNew(StartRemoteControlTask, NULL, &remoteControlTask_attributes);
-
+  appIMUTaskHandle = osThreadNew(StartIMUTask, NULL, &imuTask_attributes);
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -148,45 +134,8 @@ void StartDefaultTask(void *argument)
   /* USER CODE BEGIN StartDefaultTask */
   (void)argument;
 
-  deviceBMI088Config_t bmi088_config = {
-    .spi_instance_ = bspBoardGetSPIInstance(BSP_SPI_IMU),
-    .accel_cs_ = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_ACCEL),
-    .gyro_cs_ = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_GYRO),
-    .mode_ = DEVICE_BMI088_EXIT,
-    .delay_us_callback_ = bspDWTDelayUs,
-    .name_ = "BMI088_TEST",
-  };
-
-  bmi088_test_instance_ = deviceBMI088InstanceInit(&bmi088_config);
-  if (bmi088_test_instance_ == NULL) {
-    for (;;) {
-      osDelay(1000);
-    }
-  }
-
-  bspGPIOInstance_t *int3 = bspBoardGetGPIOInstance(BSP_GPIO_IMU_INT1_GYRO);
-  bspGPIOIsrCallbackRegister(int3, (void *)NULL, bmi088GyroITCallback);
-
-  bmi088_test_init_status_ = deviceBMI088Init((deviceBMI088Instance_t *)bmi088_test_instance_);
-  bmi088_test_init_status_ &= deviceBMI088ConfigGyroDataReadyIT((deviceBMI088Instance_t *)bmi088_test_instance_);
-
   for (;;) {
-    (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-    if (bmi088_test_init_status_ == DEVICE_BMI088_OK) {
-      deviceBMI088Data_t data = {0};
-
-      bmi088_test_update_status_ = deviceBMI088UpdateData((deviceBMI088Instance_t *)bmi088_test_instance_);
-      if (bmi088_test_update_status_ == DEVICE_BMI088_OK) {
-        bmi088_test_get_status_ = deviceBMI088GetData((const deviceBMI088Instance_t *)bmi088_test_instance_, &data);
-        if (bmi088_test_get_status_ == DEVICE_BMI088_OK) {
-          bmi088_test_data_ = data;
-          bmi088_test_update_count_ ++;
-        }
-      }
-    }
-
-    // osDelay(10);
+    osDelay(1000);
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -222,4 +171,8 @@ void StartRemoteControlTask(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+void StartIMUTask(void *argument)
+{
+  appIMUTaskEntry(argument);
+}
 /* USER CODE END Application */

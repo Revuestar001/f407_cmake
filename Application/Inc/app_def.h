@@ -1,0 +1,10 @@
+#pragma once
+
+typedef enum
+{
+    APP_STATE_UNINIT = 0,
+    APP_STATE_FAILSAFE,
+    APP_STATE_DEGRADED,
+    APP_STATE_REINIT,
+    APP_STATE_NORMAL,
+} appState_e;

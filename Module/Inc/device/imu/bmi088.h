@@ -19,8 +19,8 @@ typedef enum
 typedef enum
 {
     DEVICE_BMI088_BLOCKING = 0,
-    DEVICE_BMI088_EXIT,
-    DEVICE_BMI088_EXIT_DMA,
+    DEVICE_BMI088_EXTI,
+    DEVICE_BMI088_EXTI_DMA,
 } deviceBMI088Mode_e;
 
 typedef enum
@@ -70,8 +70,8 @@ typedef struct device_bmi088_data
     int16_t accel_raw_[3];
     int16_t gyro_raw_[3];
 
-    float accel_[3];
-    float gyro_[3];
+    float accel_ms2_[3];
+    float gyro_rads_[3];
 } deviceBMI088Data_t;
 
 // 只是初始化实例，绑定板上资源
@@ -84,3 +84,4 @@ deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance);
 deviceBMI088Status_e deviceBMI088GetData(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out);
 // 配置bmi088的gyro数据就绪中断
 deviceBMI088Status_e deviceBMI088ConfigGyroDataReadyIT(deviceBMI088Instance_t *instance);
+deviceBMI088Status_e deviceBMI088GetMode(deviceBMI088Instance_t *instance, deviceBMI088Mode_e *mode_out);

@@ -6,7 +6,7 @@
 
 // 结构体前置声明
 typedef struct gpio_instance bspGPIOInstance_t;
-typedef void (*bspGPIOIsrCallback_f)(void *callback_arg) ; // EXIT中断回调函数指针
+typedef void (*bspGPIOIsrCallback_f)(void *owner, bspGPIOInstance_t *instance) ; // EXIT中断回调函数指针
 
 // 注册EXIT外部中断触发回调函数
 // 线程不安全，必须在osKernelStart() 前调用

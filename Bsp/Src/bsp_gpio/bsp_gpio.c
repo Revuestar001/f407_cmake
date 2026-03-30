@@ -94,7 +94,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     {
         if (gpio_instance_memory_[i].pin_ == GPIO_Pin && gpio_instance_memory_[i].isr_callback_ != NULL)
         {
-            gpio_instance_memory_[i].isr_callback_((void *)gpio_instance_memory_[i].owner_);
+            gpio_instance_memory_[i].isr_callback_((void *)gpio_instance_memory_[i].owner_, &gpio_instance_memory_[i]);
             return;
         }
     }
