@@ -1,9 +1,6 @@
 ﻿#pragma once
-#include "FreeRTOS.h"
-
 #include <stdbool.h>
-
-#include "rc_mapper.h"
+#include <stdint.h>
 
 typedef enum
 {
@@ -19,12 +16,6 @@ typedef enum
     APP_REMOTE_CONTROL_DRIVE_MODE_AUTO
 } appRemoteControlDriveMode_e;
 
-typedef struct app_remote_control_output
-{
-    appRemoteControlState_e state_;
-    moduleRCMapper_t rc_mapper_;
-} appRemoteControlOutput_t;
-
 // 指令结构体
 typedef struct app_remote_control_command
 {
@@ -35,10 +26,9 @@ typedef struct app_remote_control_command
     int16_t angular_speed_;
 } appRemoteControlCommand_t;
 
-void appRemoteControlInit(void);
-bool appRemoteControlUpdate(TickType_t timeout_tick);
-appRemoteControlOutput_t appRemoteControlGetOutput(void);
 appRemoteControlState_e appRemoteControlGetState(void);
-moduleRCMapper_t appRemoteControlGetRCMapped(void);
 // 一般直接获取指令值即可
 appRemoteControlCommand_t appRemoteControlGetCommand(void);
+
+// 任务循环
+void appRemoteControlTaskEntry(void *argument);

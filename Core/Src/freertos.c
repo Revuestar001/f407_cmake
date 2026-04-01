@@ -50,9 +50,8 @@ const osThreadAttr_t remoteControlTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-
-volatile UBaseType_t remote_control_task_stack_high_water_mark_ = 0;
-volatile UBaseType_t remote_control_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
+// volatile UBaseType_t remote_control_task_stack_high_water_mark_ = 0;
+// volatile UBaseType_t remote_control_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
 
 osThreadId_t appIMUTaskHandle;
 const osThreadAttr_t imuTask_attributes = {
@@ -60,8 +59,9 @@ const osThreadAttr_t imuTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
-volatile UBaseType_t imu_task_stack_high_water_mark_ = 0;
-volatile UBaseType_t imu_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
+// volatile UBaseType_t imu_task_stack_high_water_mark_ = 0;
+// volatile UBaseType_t imu_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
+
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -150,22 +150,7 @@ void StartDefaultTask(void *argument)
 void StartRemoteControlTask(void *argument)
 {
   /* USER CODE BEGIN StartRemoteControlTask */
-  (void)argument;
-
-  appRemoteControlInit();
-  remote_control_task_stack_high_water_mark_ = uxTaskGetStackHighWaterMark(NULL);
-
-  for (;;) {
-    // 无限阻塞不合理，超时10ms认为lost
-    (void)appRemoteControlUpdate(pdMS_TO_TICKS(10));
-
-    {
-      UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
-      if (stack_high_water_mark < remote_control_task_stack_high_water_mark_min_) {
-        remote_control_task_stack_high_water_mark_min_ = stack_high_water_mark;
-      }
-    }
-  }
+  appRemoteControlTaskEntry(argument);
   /* USER CODE END StartRemoteControlTask */
 }
 

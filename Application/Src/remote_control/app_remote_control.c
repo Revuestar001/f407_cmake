@@ -9,7 +9,14 @@
 #include "app_remote_control.h"
 #include "bsp_board.h"
 #include "bsp_uart.h"
+#include "rc_mapper.h"
 #include "sbus.h"
+
+typedef struct app_remote_control_output
+{
+    appRemoteControlState_e state_;
+    moduleRCMapper_t rc_mapper_;
+} appRemoteControlOutput_t;
 
 typedef struct app_remote_control
 {
@@ -22,9 +29,10 @@ typedef struct app_remote_control
 
     protocolSBUSDataPraser_t sbus_praser_;
     appRemoteControlOutput_t output_;
+    TickType_t last_valid_frame_tick_; // 记录上一次有效帧的timetick
 } appRemoteControlInstance_t;
 
-static appRemoteControlInstance_t app_instance_ = {0};
+static appRemoteControlInstance_t app_rc_instance_ = {0};
 
 // stream buffer
 // 请注意，stream buffer的大小+2(stream buffer实际容量)不能比底层bsp_uart的DMA缓冲区小，否则会造成字节丢失
@@ -32,6 +40,9 @@ static uint8_t stream_buffer_[BSP_UART_RX_BUFFER_SIZE * 2 + 2U];
 static StaticStreamBuffer_t stream_buffer_struct_;
 
 #define UPDATE_TEMP_BUFFER_SIZE PROTOCOL_SBUS_FRAME_SIZE
+#define APP_REMOTE_CONTROL_REINIT_DELAY_MS 100U
+#define APP_REMOTE_CONTROL_MAX_UPDATE_WAIT_MS 10U // 最低更新频率
+#define APP_REMOTE_CONTROL_LOST_TIMEOUT_MS 50U // 认为RC LOST的超时时间，不要太小可能导致误判，请注意这个是指解析到两个完整25字节有效SBUS帧之间的时间，不是指frame_lost_flag
 
 static appRemoteControlState_e appRemoteControlGetStateFromSBUSFrame(const protocolSBUSDataFrame_t *sbus_frame)
 {
@@ -46,15 +57,38 @@ static appRemoteControlState_e appRemoteControlGetStateFromSBUSFrame(const proto
     return APP_REMOTE_CONTROL_STATE_CONTROL;
 }
 
-static void appRemoteControlSetOutput(const appRemoteControlOutput_t *output)
+// 为rc输出状态设为lost
+static void appRemoteControlSetOutputLost(appRemoteControlOutput_t *output)
 {
     if (output == NULL) {
         return;
     }
 
+    moduleRCMapperInit(&output->rc_mapper_);
+    output->state_ = APP_REMOTE_CONTROL_STATE_LOST;
+}
+
+// 更新rc实例中的输出结构体
+static void appRemoteControlUpdateOutput(const appRemoteControlOutput_t *output)
+{
+    if (output == NULL) {
+        return;
+    }
+
+    // 这个临界区似乎不是很有必要
     taskENTER_CRITICAL();
-    app_instance_.output_ = *output;
+    app_rc_instance_.output_ = *output;
     taskEXIT_CRITICAL();
+}
+
+// 判断是否超时了还没收到有效帧
+static bool appRemoteControlIsFrameExpired(TickType_t timeout_tick)
+{
+    if (timeout_tick == (TickType_t)0) {
+        return false;
+    }
+
+    return (xTaskGetTickCount() - app_rc_instance_.last_valid_frame_tick_) >= timeout_tick;
 }
 
 static void appRemoteControlSendSegmentToBufferFromISR(appRemoteControlInstance_t *instance,
@@ -135,50 +169,53 @@ static void appRemoteControlSendDataToBuffer(void *owner_ptr,
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
-void appRemoteControlInit(void)
+static bool appRemoteControlInit(void)
 {
-    memset(&app_instance_, 0, sizeof(appRemoteControlInstance_t));
+    memset(&app_rc_instance_, 0, sizeof(appRemoteControlInstance_t));
+    appRemoteControlSetOutputLost(&app_rc_instance_.output_);
+    app_rc_instance_.last_valid_frame_tick_ = xTaskGetTickCount();
 
-    app_instance_.output_.state_ = APP_REMOTE_CONTROL_STATE_LOST;
-
-    app_instance_.uart_instance_ = bspBoardGetUARTInstance(BSP_UART_SBUS);
-    if (app_instance_.uart_instance_ == NULL) {
-        return;
+    app_rc_instance_.uart_instance_ = bspBoardGetUARTInstance(BSP_UART_SBUS);
+    if (app_rc_instance_.uart_instance_ == NULL) {
+        return false;
     }
 
     // 触发字节数先只给1
     // 实际容量还要再减1
-    app_instance_.stream_buffer_handle_ = xStreamBufferCreateStatic(sizeof(stream_buffer_) - 1U,
+    app_rc_instance_.stream_buffer_handle_ = xStreamBufferCreateStatic(sizeof(stream_buffer_) - 1U,
                                                                     1U,
                                                                     stream_buffer_,
                                                                     &stream_buffer_struct_);
-    if (app_instance_.stream_buffer_handle_ == NULL) {
-        return;
+    if (app_rc_instance_.stream_buffer_handle_ == NULL) {
+        return false;
     }
 
-    protocolSBUSPraserInit(&app_instance_.sbus_praser_);
-    moduleRCMapperInit(&app_instance_.output_.rc_mapper_);
+    protocolSBUSPraserInit(&app_rc_instance_.sbus_praser_);
+    moduleRCMapperInit(&app_rc_instance_.output_.rc_mapper_);
 
-    bspUARTRxEventCallbackRegister(app_instance_.uart_instance_,
-                                   (void *)&app_instance_,
+    bspUARTRxEventCallbackRegister(app_rc_instance_.uart_instance_,
+                                   (void *)&app_rc_instance_,
                                    appRemoteControlSendDataToBuffer);
-    (void)bspUARTRxStart(app_instance_.uart_instance_);
+    if (bspUARTRxStart(app_rc_instance_.uart_instance_) != BSP_UART_OK) {
+        return false;
+    }
+
+    return true;
 }
 
 // 返回是否成功更新一帧RC指令
-bool appRemoteControlUpdate(TickType_t timeout_tick)
+static bool appRemoteControlUpdate(TickType_t timeout_tick)
 {
     // 临时缓冲数组
     uint8_t rx_buffer[UPDATE_TEMP_BUFFER_SIZE] = {0};
     uint16_t rx_data_length_actual = 0U;
     protocolSBUSDataFrame_t rx_sbus_frame;
     protocolSBUSFeedResult_e feed_result;
-    appRemoteControlOutput_t output = app_instance_.output_;
-    TickType_t first_wait_tick = timeout_tick;
-    bool received_any_byte = false;
+    // 这个读取也许要加临界区？似乎没有很大的必要
+    appRemoteControlOutput_t output = app_rc_instance_.output_;
     bool received_valid_frame = false;
 
-    if (app_instance_.stream_buffer_handle_ == NULL) {
+    if (app_rc_instance_.stream_buffer_handle_ == NULL) {
         return false;
     }
 
@@ -186,30 +223,24 @@ bool appRemoteControlUpdate(TickType_t timeout_tick)
     while (true) {
         // 第一次读取阻塞读取StreamBuffer
         // 一次最大只能读出临时数组大小
-        rx_data_length_actual = (uint16_t)xStreamBufferReceive(app_instance_.stream_buffer_handle_,
+        rx_data_length_actual = (uint16_t)xStreamBufferReceive(app_rc_instance_.stream_buffer_handle_,
                                                                rx_buffer,
                                                                sizeof(rx_buffer),
                                                                timeout_tick);
 
         // 如果从StreamBuffer里拿不到新数据了，终止循环
         if (rx_data_length_actual == 0U) {
-            // 如果阻塞时间不为零且没有收到数据，就认为LOST，这个逻辑可能还需要更改
-            if (received_any_byte == false && received_valid_frame == false && first_wait_tick != (TickType_t)0) {
-                output.state_ = APP_REMOTE_CONTROL_STATE_LOST;
-                appRemoteControlSetOutput(&output);
-            }
             break;
         }
 
-        received_any_byte = true;
-
-        feed_result = protocolSBUSPraserFeedBufferLastFrame(&app_instance_.sbus_praser_,
+        feed_result = protocolSBUSPraserFeedBufferLastFrame(&app_rc_instance_.sbus_praser_,
                                                             rx_buffer,
                                                             rx_data_length_actual,
                                                             &rx_sbus_frame);
         if (feed_result == PROTOCOL_SBUS_FEED_FRAME_OK) {
             moduleRCMapperUpdateFromSBUSFrame(&output.rc_mapper_, &rx_sbus_frame);
             output.state_ = appRemoteControlGetStateFromSBUSFrame(&rx_sbus_frame);
+            app_rc_instance_.last_valid_frame_tick_ = xTaskGetTickCount();
             received_valid_frame = true;
         }
 
@@ -218,19 +249,25 @@ bool appRemoteControlUpdate(TickType_t timeout_tick)
     }
 
     if (received_valid_frame == true) {
-        appRemoteControlSetOutput(&output);
+        appRemoteControlUpdateOutput(&output);
         return true;
+    }
+
+    if (received_valid_frame == false &&
+        appRemoteControlIsFrameExpired(pdMS_TO_TICKS(APP_REMOTE_CONTROL_LOST_TIMEOUT_MS)) == true) {
+        appRemoteControlSetOutputLost(&output);
+        appRemoteControlUpdateOutput(&output);
     }
 
     return false;
 }
 
-appRemoteControlOutput_t appRemoteControlGetOutput(void)
+static appRemoteControlOutput_t appRemoteControlGetOutput(void)
 {
     appRemoteControlOutput_t output;
 
     taskENTER_CRITICAL();
-    output = app_instance_.output_;
+    output = app_rc_instance_.output_;
     taskEXIT_CRITICAL();
 
     return output;
@@ -239,11 +276,6 @@ appRemoteControlOutput_t appRemoteControlGetOutput(void)
 appRemoteControlState_e appRemoteControlGetState(void)
 {
     return appRemoteControlGetOutput().state_;
-}
-
-moduleRCMapper_t appRemoteControlGetRCMapped(void)
-{
-    return appRemoteControlGetOutput().rc_mapper_;
 }
 
 // 转换为速度油门指令
@@ -289,9 +321,18 @@ appRemoteControlCommand_t appRemoteControlGetCommand(void)
     return appRemoteControlBuildCommand(&output);
 }
 
+void appRemoteControlTaskEntry(void *argument)
+{
+  (void)argument;
 
+  // 尝试初始化
+  while (appRemoteControlInit() == false) {
+    vTaskDelay(pdMS_TO_TICKS(APP_REMOTE_CONTROL_REINIT_DELAY_MS));
+  }
 
-
-
-
+  for (;;) {
+    // 无限阻塞不合理，超时10ms认为lost
+    (void)appRemoteControlUpdate(pdMS_TO_TICKS(APP_REMOTE_CONTROL_MAX_UPDATE_WAIT_MS));
+  }
+}
 
