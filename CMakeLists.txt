@@ -57,6 +57,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/protocol/sbus.c
     Module/Src/rc_mapper/rc_mapper.c
     Module/Src/device/imu/bmi088.c
+    Module/Src/device/magnetometer/ist8310.c
 
     Application/Src/remote_control/app_remote_control.c
     Application/Src/imu/app_imu.c
@@ -77,6 +78,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/protocol/
     Module/Inc/rc_mapper/
     Module/Inc/device/imu/
+    Module/Inc/device/magnetometer/
 
     Application/Inc/remote_control/
     Application/Inc/imu/

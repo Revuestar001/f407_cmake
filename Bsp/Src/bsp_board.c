@@ -57,12 +57,21 @@ static void bspBoardGPIOInit()
     gpio_config = bspBoardSetGPIOConfig(CS1_GYRO_GPIO_Port, CS1_GYRO_Pin, BSP_GPIO_ACTIVE_LOW, "CS1_GYRO");
     bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_CS1_GYRO] = bspGPIOInit(&gpio_config);
     bspGPIOWriteLogic(bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_CS1_GYRO], false);
+
+    // MAG RESET
+    // 低电平有效
+    gpio_config = bspBoardSetGPIOConfig(RSTN_IST8310_GPIO_Port, RSTN_IST8310_Pin, BSP_GPIO_ACTIVE_LOW, "RSTN_IST8310");
+    bspBoardGPIOInstancePtrArray[BSP_GPIO_MAG_RSTN] = bspGPIOInit(&gpio_config);
+    bspGPIOWriteLogic(bspBoardGPIOInstancePtrArray[BSP_GPIO_MAG_RSTN], false);
+
     // EXTI
     // 逻辑有效电平怎么给？
     gpio_config = bspBoardSetGPIOConfig(INT1_ACCEL_GPIO_Port, INT1_ACCEL_Pin, BSP_GPIO_ACTIVE_HIGH, "INT1_ACCEL");
     bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_INT1_ACCEL] = bspGPIOInit(&gpio_config);
     gpio_config = bspBoardSetGPIOConfig(INT1_GYRO_GPIO_Port, INT1_GYRO_Pin, BSP_GPIO_ACTIVE_HIGH, "INT1_GYRO");
     bspBoardGPIOInstancePtrArray[BSP_GPIO_IMU_INT1_GYRO] = bspGPIOInit(&gpio_config);
+    gpio_config = bspBoardSetGPIOConfig(DRDY_IST8310_GPIO_Port, DRDY_IST8310_Pin, BSP_GPIO_ACTIVE_HIGH, "DRDY_IST8310");
+    bspBoardGPIOInstancePtrArray[BSP_GPIO_MAG_DRDY] = bspGPIOInit(&gpio_config);
 }
 
 bspGPIOInstance_t *bspBoardGetGPIOInstance(bspGPIOId_e gpio_id)

@@ -432,7 +432,7 @@ deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance)
 
 deviceBMI088Status_e deviceBMI088GetData(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out)
 {
-    if (instance == NULL || instance->is_initialized_ == false) {
+    if (instance == NULL || instance->is_initialized_ == false || data_out == NULL) {
         return DEVICE_BMI088_ERROR;
     }
 
