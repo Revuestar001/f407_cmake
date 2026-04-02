@@ -49,6 +49,10 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(RSTN_IST8310_GPIO_Port, RSTN_IST8310_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_BLUE_GPIO_Port, LED_BLUE_Pin, GPIO_PIN_RESET);
@@ -58,6 +62,19 @@ void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(CS1_GYRO_GPIO_Port, CS1_GYRO_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin : RSTN_IST8310_Pin */
+  GPIO_InitStruct.Pin = RSTN_IST8310_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(RSTN_IST8310_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : DRDY_IST8310_Pin */
+  GPIO_InitStruct.Pin = DRDY_IST8310_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(DRDY_IST8310_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LED_BLUE_Pin */
   GPIO_InitStruct.Pin = LED_BLUE_Pin;

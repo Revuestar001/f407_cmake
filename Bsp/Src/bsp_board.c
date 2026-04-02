@@ -1,4 +1,4 @@
-#include <stdbool.h>
+﻿#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -10,6 +10,7 @@
 #include "bsp_uart_private.h"
 #include "bsp_spi_private.h"
 #include "bsp_can_private.h"
+#include "bsp_i2c_private.h"
 #include "bsp_dwt.h"
 
 // 储存所有GPIO实例的指针
@@ -21,6 +22,8 @@ static uint8_t bspUARTRxBuffer[BSP_UART_MAX][BSP_UART_RX_BUFFER_SIZE] = {0};
 static bspSPIInstance_t *bspBoardSPIInstancePtrArray[BSP_SPI_MAX] = {NULL};
 // 储存所有CAN实例的指针
 static bspCANInstance_t *bspBoardCANInstancePtrArray[BSP_CAN_MAX] = {NULL};
+// 储存所有I2C实例的指针
+static bspI2CInstance_t *bspBoardI2CInstancePtrArray[BSP_I2C_MAX] = {NULL};
 
 //
 // GPIO
@@ -185,6 +188,38 @@ bspCANInstance_t *bspBoardGetCANInstance(bspCANId_e can_id)
 }
 
 //
+// I2C
+//
+static bspI2CConfig_t bspBoardSetI2CConfig(I2C_HandleTypeDef *i2c_handle,
+                                            bspI2CWorkMode_e i2c_work_mode,
+                                            const char *i2c_name)
+{
+    bspI2CConfig_t i2c_config;
+    i2c_config.i2c_handle_ = i2c_handle;
+    i2c_config.i2c_work_mode_ = i2c_work_mode;
+    i2c_config.name_ = i2c_name;
+
+    return i2c_config;
+}
+
+static void bspBoardI2CInit()
+{
+    bspI2CConfig_t i2c_config = {0};
+
+    i2c_config = bspBoardSetI2CConfig(&I2C_MAG, BSP_I2C_WORK_MODE_BLOCKING, "I2C_MAG");
+    bspBoardI2CInstancePtrArray[BSP_I2C_MAG] = bspI2CInit(&i2c_config);
+}
+
+bspI2CInstance_t *bspBoardGetI2CInstance(bspI2CId_e i2c_id)
+{
+    if (i2c_id >= BSP_I2C_MAX) {
+        return NULL;
+    }
+
+    return bspBoardI2CInstancePtrArray[i2c_id];
+}
+
+//
 // BOARD
 //
 void bspBoardInit()
@@ -195,4 +230,5 @@ void bspBoardInit()
     bspBoardUARTInit();
     bspBoardSPIInit();
     bspBoardCANInit();
+    bspBoardI2CInit();
 }

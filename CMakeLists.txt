@@ -50,6 +50,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/bsp_spi/bsp_spi.c
     Bsp/Src/bsp_can/bsp_can.c
     Bsp/Src/bsp_dwt/bsp_dwt.c
+    Bsp/Src/bsp_i2c/bsp_i2c.c
     Bsp/Src/bsp_board.c
 
     Module/Src/util/ring_buffer.c
@@ -69,6 +70,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Inc/bsp_spi
     Bsp/Inc/bsp_can
     Bsp/Inc/bsp_dwt
+    Bsp/Inc/bsp_i2c
     Bsp/Inc/
 
     Module/Inc/util/
