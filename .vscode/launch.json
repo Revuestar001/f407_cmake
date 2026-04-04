@@ -2,6 +2,20 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "type": "stlinkgdbtarget",
+            "request": "launch",
+            "name": "STM32Cube: Launch ST-Link GDB Server",
+            "origin": "snippet",
+            "cwd": "${workspaceFolder}",
+            "preBuild": "${command:st-stm32-ide-debug-launch.build}",
+            "runEntry": "main",
+            "imagesAndSymbols": [
+                {
+                    "imageFileName": "${command:st-stm32-ide-debug-launch.get-projects-binary-from-context1}"
+                }
+            ]
+        },
+        {
             "name": "DAPLink + OpenOCD (Launch)",
             "type": "cortex-debug",
             "request": "launch",
@@ -13,9 +27,9 @@
             "armToolchainPath": "${env:LOCALAPPDATA}/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin",
             "toolchainPath": "${env:LOCALAPPDATA}/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin",
             "toolchainPrefix": "arm-none-eabi",
-            "serverpath": "E:/stm32project/xpack-openocd-0.12.0-7/bin/openocd.exe",
+            "serverpath": "E:/Balance_chassis/xpack-openocd-0.12.0-7/bin/openocd.exe",
             "searchDir": [
-                "E:/stm32project/xpack-openocd-0.12.0-7/openocd/scripts"
+                "E:/Balance_chassis/xpack-openocd-0.12.0-7/openocd/scripts"
             ],
             "configFiles": [
                 "interface/cmsis-dap.cfg",
@@ -25,7 +39,7 @@
                 "transport select swd",
                 "adapter speed 1000"
             ],
-            "rtos": "auto",
+            // "rtos": "auto",
             "liveWatch": {
                 "enabled": true,
                 "samplesPerSecond": 4
@@ -45,9 +59,9 @@
             "armToolchainPath": "${env:LOCALAPPDATA}/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin",
             "toolchainPath": "${env:LOCALAPPDATA}/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin",
             "toolchainPrefix": "arm-none-eabi",
-            "serverpath": "E:/stm32project/xpack-openocd-0.12.0-7/bin/openocd.exe",
+            "serverpath": "E:/Balance_chassis/xpack-openocd-0.12.0-7/bin/openocd.exe",
             "searchDir": [
-                "E:/stm32project/xpack-openocd-0.12.0-7/openocd/scripts"
+                "E:/Balance_chassis/xpack-openocd-0.12.0-7/openocd/scripts"
             ],
             "configFiles": [
                 "interface/cmsis-dap.cfg",
@@ -57,7 +71,7 @@
                 "transport select swd",
                 "adapter speed 1000"
             ],
-            "rtos": "auto",
+            // "rtos": "auto",
             "liveWatch": {
                 "enabled": true,
                 "samplesPerSecond": 4

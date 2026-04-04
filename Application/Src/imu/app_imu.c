@@ -121,7 +121,7 @@ static appState_e appIMUUpdate(appIMUData_t *imu_data_output)
     }
 
     deviceBMI088Data_t bmi088_data;
-    deviceBMI088GetData(app_imu_instance_.bmi088_instance_, &bmi088_data);
+    deviceBMI088GetDataByOutputFrame(app_imu_instance_.bmi088_instance_, &bmi088_data, DEVICE_BMI088_OUTPUT_FRAME_FLU);
 
     // 请注意，拷贝的是float数组，不是三个字节！
     memcpy(imu_data_output->accel_ms2_, bmi088_data.accel_ms2_, sizeof(imu_data_output->accel_ms2_));

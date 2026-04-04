@@ -22,6 +22,19 @@
 
 typedef enum
 {
+    DEVICE_BMI088_AXIS_X = 0,
+    DEVICE_BMI088_AXIS_Y,
+    DEVICE_BMI088_AXIS_Z,
+} deviceBMI088Axis_e; // 枚举bmi088的x y z轴
+
+typedef struct device_bmi088_install_transform
+{
+    deviceBMI088Axis_e axis_map[3]; // 坐标轴映射，表示机体坐标系的每一个轴，对应到bmi088的哪一个轴
+    int8_t axis_sign[3]; // 轴的正负
+} deviceBMI088InstallTransform_t; // 定义bmi088安装变换,暂时先不暴露，因为这个其实和板子固定了，从外部传入容易出错
+
+typedef enum
+{
     DEVICE_BMI088_TARGET_NONE = 0,
     DEVICE_BMI088_TARGET_ACCEL,
     DEVICE_BMI088_TARGET_GYRO,
@@ -35,6 +48,7 @@ typedef struct device_bmi088
     bspGPIOInstance_t *gyro_cs_;
 
     deviceBMI088Mode_e mode_;
+    deviceBMI088InstallTransform_t install_transform_;
 
     deviceBMI088DelayUsCallback_f delay_us_callback_;
 
@@ -241,9 +255,6 @@ static bool deviceBMI088GetChipID(deviceBMI088Instance_t *instance)
         return false;
     }
 
-    instance->data_.accel_chip_id_ = chip_id[0];
-    instance->data_.gyro_chip_id_ = chip_id[1];
-
     return true;
 }
 
@@ -298,6 +309,17 @@ static bool deviceBMI088ConfigGyro(deviceBMI088Instance_t *instance)
     return state;
 }
 
+static void deviceBMI088MapDataByInstallTransform(deviceBMI088Instance_t  *instance, const float data_raw[3], float data_mapped[3])
+{
+    if (instance == NULL) {
+        return;
+    }
+
+    data_mapped[0] = (float)instance->install_transform_.axis_sign[0] * data_raw[instance->install_transform_.axis_map[0]];
+    data_mapped[1] = (float)instance->install_transform_.axis_sign[1] * data_raw[instance->install_transform_.axis_map[1]];
+    data_mapped[2] = (float)instance->install_transform_.axis_sign[2] * data_raw[instance->install_transform_.axis_map[2]];
+}
+
 // 这里是初始化实例，也许改为register更好？
 deviceBMI088Instance_t *deviceBMI088InstanceInit(const deviceBMI088Config_t *config)
 {
@@ -319,6 +341,15 @@ deviceBMI088Instance_t *deviceBMI088InstanceInit(const deviceBMI088Config_t *con
     instance->accel_cs_ = config->accel_cs_;
     instance->gyro_cs_ = config->gyro_cs_;
     instance->mode_ = config->mode_;
+    // 默认都是转到FLU下，根据bmi088的安装情况，转到FLU下
+    deviceBMI088InstallTransform_t install_transform;
+    install_transform.axis_map[0] = DEVICE_BMI088_AXIS_X;
+    install_transform.axis_map[1] = DEVICE_BMI088_AXIS_Y;
+    install_transform.axis_map[2] = DEVICE_BMI088_AXIS_Z;
+    install_transform.axis_sign[0] = 1;
+    install_transform.axis_sign[1] = 1;
+    install_transform.axis_sign[2] = 1;
+    instance->install_transform_ = install_transform;
     instance->delay_us_callback_ = config->delay_us_callback_;
     instance->name_ = config->name_;
     instance->is_initialized_ = false;
@@ -418,14 +449,18 @@ deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance)
     instance->data_.gyro_raw_[1] = gyro_raw[1];
     instance->data_.gyro_raw_[2] = gyro_raw[2];
 
-    // 当前换算系数对应 init() 里固定写入的量程配置，accel_单位为m/s^2，gyro_单位为rad/s
-    instance->data_.accel_ms2_[0] = ((float)accel_raw[0] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
-    instance->data_.accel_ms2_[1] = ((float)accel_raw[1] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
-    instance->data_.accel_ms2_[2] = ((float)accel_raw[2] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
+    float data[3];
 
-    instance->data_.gyro_rads_[0] = ((float)gyro_raw[0] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
-    instance->data_.gyro_rads_[1] = ((float)gyro_raw[1] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
-    instance->data_.gyro_rads_[2] = ((float)gyro_raw[2] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
+    // 当前换算系数对应 init() 里固定写入的量程配置，accel_单位为m/s^2，gyro_单位为rad/s
+    data[0] = ((float)accel_raw[0] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
+    data[1] = ((float)accel_raw[1] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
+    data[2] = ((float)accel_raw[2] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
+    deviceBMI088MapDataByInstallTransform(instance, data, instance->data_.accel_ms2_);
+
+    data[0] = ((float)gyro_raw[0] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
+    data[1] = ((float)gyro_raw[1] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
+    data[2] = ((float)gyro_raw[2] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
+    deviceBMI088MapDataByInstallTransform(instance, data, instance->data_.gyro_rads_);
 
     return DEVICE_BMI088_OK;
 }
@@ -437,6 +472,35 @@ deviceBMI088Status_e deviceBMI088GetData(const deviceBMI088Instance_t *instance,
     }
 
     *data_out = instance->data_;
+
+    return DEVICE_BMI088_OK;
+}
+
+deviceBMI088Status_e deviceBMI088GetDataByOutputFrame(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out, deviceBMI088OutputFrame_e frame)
+{
+    if (instance == NULL || instance->is_initialized_ == false || data_out == NULL) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    // 默认instance中的data数据(data_raw不是！)是在FLU下的
+    switch (frame) {
+        case DEVICE_BMI088_OUTPUT_FRAME_FLU:
+            *data_out = instance->data_;
+            break;
+        case DEVICE_BMI088_OUTPUT_FRAME_FRD:
+            data_out->accel_ms2_[0] = instance->data_.accel_ms2_[0];
+            data_out->accel_ms2_[1] = -instance->data_.accel_ms2_[1];
+            data_out->accel_ms2_[2] = -instance->data_.accel_ms2_[2];
+            data_out->gyro_rads_[0] = instance->data_.gyro_rads_[0];
+            data_out->gyro_rads_[1] = -instance->data_.gyro_rads_[1];
+            data_out->gyro_rads_[2] = -instance->data_.gyro_rads_[2];
+
+            memcpy(data_out->accel_raw_, instance->data_.accel_raw_, sizeof(int16_t) * 3U);
+            memcpy(data_out->gyro_raw_, instance->data_.gyro_raw_, sizeof(int16_t) * 3U);
+            break;
+        default:
+            return DEVICE_BMI088_ERROR;
+    }
 
     return DEVICE_BMI088_OK;
 }
