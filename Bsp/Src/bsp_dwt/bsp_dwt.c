@@ -6,8 +6,30 @@
 #include "bsp_dwt.h"
 
 static bool dwt_is_initialized_ = false;
+static uint32_t dwt_last_cnt_ = 0;
+static uint64_t dwt_timestamp_us_ = 0;
 
-void bspDWTInit()
+// 进入临界区
+static uint32_t bspDWTEnterCritical(void)
+{   
+    // 获取当前可屏蔽中断的状态
+    // primask为1表示可屏蔽中断关闭
+    // 在关中断前，先记录中断是否已经关闭
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq(); // 关中断
+    return primask;
+}
+
+// 退出临界区
+static void bspDWTExitCritical(uint32_t primask)
+{
+    // 设置可屏蔽中断的状态来恢复到关中断前的状态
+    // 防止在进入临界区前本来是关中断的情况下，退出临界区反而打开了中断
+    // 所以有可能退出临界区时还是关中断状态
+    __set_PRIMASK(primask);
+}
+
+void bspDWTInit(void)
 {
     if (dwt_is_initialized_ == true) {
         return;
@@ -19,6 +41,8 @@ void bspDWTInit()
     // 使能CYCCNT寄存器，由DWT_CTRL(0xE0001000)的第0位控制
     DWT->CTRL = (uint32_t)1 << 0U;
 
+    dwt_last_cnt_ = 0;
+    dwt_timestamp_us_ = 0;
     dwt_is_initialized_ = true;
 }
 
@@ -67,4 +91,25 @@ void bspDWTDelayMs(uint32_t time_ms)
     for (uint32_t i = 0; i < time_ms; i++) {
         bspDWTDelayUs(1000U);
     }
+}
+
+uint64_t bspDWTGetAbsTimeUs(void)
+{   
+    if (dwt_is_initialized_ == false) {
+        return 0ULL;
+    }
+
+    // 对uint64_t读写不是原子操作，而且这个函数多个地方都要调用，因此进入临界区
+    uint32_t primask = bspDWTEnterCritical();
+    uint32_t now_cnt = bspDWTGetCount();
+    uint32_t delta_cnt = now_cnt - dwt_last_cnt_;
+
+    // 不直接用bspDWTGetElapsedTimeUs累加，是为了防止累积舍入误差
+    dwt_timestamp_us_ += ((uint64_t)delta_cnt * 1000000ULL) / SystemCoreClock;
+    dwt_last_cnt_ = now_cnt;
+
+    // 退出临界区
+    bspDWTExitCritical(primask);
+
+    return dwt_timestamp_us_;
 }

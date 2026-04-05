@@ -66,7 +66,7 @@ typedef struct app_ins_accel_6_face_calibrate
     uint32_t stable_count_;
     uint32_t face_sample_count_[6];
     float face_measure_accumulate_[6][3];
-} appINSAccelSixFaceCalibrate_t;
+} appINSAccelSixFaceCalibrate_t; // accel六面标定中间数据
 
 // app_ins 内部启动状态
 typedef enum
@@ -80,7 +80,7 @@ typedef enum
     APP_INS_RUNNING,
     APP_INS_DEGRADED,
     APP_INS_REINIT,
-} appINSStage_e;
+} appINSStage_e; // INS内部状态枚举
 
 typedef struct app_ins_calibrate_data
 {
@@ -97,7 +97,7 @@ typedef struct app_ins_calibrate_data
     float accel_bias_ms2_[3];
     float accel_scale_[3];
     bool accel_bias_scale_ready_;
-} appINSCalibrateData_t;
+} appINSCalibrateData_t; // 包含标定校准数据
 
 typedef struct app_ins_observation_data
 {
@@ -106,8 +106,10 @@ typedef struct app_ins_observation_data
     float gyro_corrected_rads_[3];
     float mag_ut_[3];
 
-    uint64_t timestamp_;
-} appINSObservationData_t;
+    uint64_t imu_timestamp_us_; // imu时间戳
+    uint64_t mag_timestamp_us_; // mag时间戳
+    bool mag_is_new_; // 表示这个mag_timestamp_us_时间戳下的mag数据是否是新来的，用于ekf的mag update
+} appINSObservationData_t; // ekf输入数据
 
 typedef struct app_ins
 {
@@ -123,21 +125,19 @@ typedef struct app_ins
     bspGPIOInstance_t *mag_int_;
 
     appINSMode_e mode_;
-    appINSData_t data_;
+    appINSData_t data_; // 输出用，姿态解算后的数据
     appINSStage_e stage_;
 
     // 最新传感器数据，不在这里原地做 app 层校准
     deviceBMI088Data_t latest_imu_data_;
     deviceIST8310Data_t latest_mag_data_;
     // MAG 中断到来，只置位，不直接在 ISR 里读 I2C
-    bool mag_sample_valid_;
+    bool mag_new_data_ready_;
     // 表示至少已经成功拿到一帧有效 MAG 数据
-    bool mag_data_ready_;
+    bool mag_data_valid_;
 
     appINSCalibrateData_t calibrate_data_;
     appINSObservationData_t observation_data_; // 校正过后的九轴数据，给ekf使用
-
-    uint32_t last_dwt_cnt_;
 
     uint8_t error_count_;
 } appINSInstance_t;
@@ -375,7 +375,7 @@ static void appINSMAGDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *
     (void)gpio_instance;
     appINSInstance_t *instance = (appINSInstance_t *)owner;
 
-    instance->mag_sample_valid_ = true;
+    instance->mag_new_data_ready_ = true;
 }
 
 // 注册 IMU drdy中断回调
@@ -562,7 +562,7 @@ static bool appINSUpdateIMUSample(void)
 
     appINSApplyGyroBias(app_ins_.latest_imu_data_.gyro_rads_, app_ins_.calibrate_data_.gyro_bias_rads_, app_ins_.observation_data_.gyro_corrected_rads_);
     appINSApplyAccelBiasScale(app_ins_.latest_imu_data_.accel_ms2_, app_ins_.calibrate_data_.accel_bias_ms2_, app_ins_.calibrate_data_.accel_scale_, app_ins_.observation_data_.accel_corrected_ms2_);
-    app_ins_.observation_data_.timestamp_ = (uint64_t)xTaskGetTickCount() * 1000ULL;
+    app_ins_.observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
 
     return true;
 }
@@ -571,7 +571,7 @@ static bool appINSUpdateIMUSample(void)
 // DRDY -> 任务读数据 -> 再次触发下一次单次测量
 static bool appINSUpdateMAGSample(void)
 {
-    if (app_ins_.stage_ == APP_INS_REINIT || app_ins_.mag_sample_valid_ == false) {
+    if (app_ins_.stage_ == APP_INS_REINIT || app_ins_.mag_new_data_ready_ == false) {
         return false;
     }
 
@@ -590,6 +590,8 @@ static bool appINSUpdateMAGSample(void)
     app_ins_.observation_data_.mag_ut_[0] = app_ins_.latest_mag_data_.mag_ut_[0];
     app_ins_.observation_data_.mag_ut_[1] = app_ins_.latest_mag_data_.mag_ut_[1];
     app_ins_.observation_data_.mag_ut_[2] = app_ins_.latest_mag_data_.mag_ut_[2];
+    app_ins_.observation_data_.mag_timestamp_us_ = bspDWTGetAbsTimeUs();
+    app_ins_.observation_data_.mag_is_new_ = true;
 
     if (deviceIST8310SetSingleMeasureMode(app_ins_.ist8310_instance_) != DEVICE_IST8310_OK) {
         app_ins_.error_count_++;
@@ -597,8 +599,8 @@ static bool appINSUpdateMAGSample(void)
         return false;
     }
 
-    app_ins_.mag_sample_valid_ = false;
-    app_ins_.mag_data_ready_ = true;
+    app_ins_.mag_new_data_ready_ = false;
+    app_ins_.mag_data_valid_ = true;
     return true;
 }
 
@@ -633,7 +635,7 @@ static void appINSProcessStartupStage(void)
         }
         break;
     case APP_INS_WAIT_MAG_SAMPLE:
-        if (app_ins_.mag_data_ready_ == true) {
+        if (app_ins_.mag_data_valid_ == true) {
             app_ins_.stage_ = APP_INS_EKF_INIT;
         }
         break;
@@ -698,7 +700,7 @@ void appINSTaskEntry(void *argument)
         appINSUpdateMAGSample();
         appINSProcessStartupStage();
 
-        // 触发一次accel标定
+        // 触发一次accel标定，为true时不进行accel校准，使用离线值
         static bool accel_calib_test_started = true;
         if (app_ins_.stage_ == APP_INS_RUNNING) {        
             if (app_ins_.stage_ == APP_INS_RUNNING && accel_calib_test_started == false) { 
