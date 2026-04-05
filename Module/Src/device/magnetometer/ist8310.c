@@ -8,6 +8,7 @@
 #include "bsp_gpio.h"
 #include "bsp_i2c.h"
 
+#define DEVICE_IST8310_HARD_RESET_WAIT_TIME_US 50000U
 #define DEVICE_IST8310_CROSS_AXIS_COMP_M (3.0f / 20.0f)
 #define DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT 50.0f
 #define DEVICE_IST8310_MILLI_GAUSS_TO_UT 0.1f
@@ -119,9 +120,9 @@ deviceIST8310Status_e deviceIST8310Init(deviceIST8310Instance_t *instance)
 
     // 硬复位确保进入 stand-by 模式
     bspGPIOWriteLogic(instance->reset_pin_, true);
-    instance->delay_us_callback_(50000U);
+    instance->delay_us_callback_(DEVICE_IST8310_HARD_RESET_WAIT_TIME_US);
     bspGPIOWriteLogic(instance->reset_pin_, false);
-    instance->delay_us_callback_(50000U);
+    instance->delay_us_callback_(DEVICE_IST8310_HARD_RESET_WAIT_TIME_US);
 
     // 检查芯片 ID
     uint8_t chip_id;
@@ -279,3 +280,13 @@ deviceIST8310Status_e deviceIST8310GetData(deviceIST8310Instance_t *instance, de
     return DEVICE_IST8310_OK;
 }
 
+deviceIST8310Status_e deviceIST8310GetMode(deviceIST8310Instance_t *instance, deviceIST8310Mode_e *mode)
+{
+    if (instance == NULL || mode == NULL) {
+        return DEVICE_IST8310_ERROR;
+    }
+
+    *mode = instance->mode_;
+
+    return DEVICE_IST8310_OK;
+}

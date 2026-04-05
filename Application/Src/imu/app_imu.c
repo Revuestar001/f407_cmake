@@ -4,7 +4,9 @@
 #include "projdefs.h"
 #include "task.h"
 
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bsp_board.h"
@@ -13,6 +15,14 @@
 #include "bmi088.h"
 #include "app_imu.h"
 #include "app_def.h"
+
+#define APP_IMU_CALIBRATE_TIME_MS 3000U
+#define APP_IMU_CALIBRATE_GYRO_TOLERANCE_RADS 0.1f
+
+typedef struct app_imu_calibrate_data
+{
+    float gyro_bias_rads_[3];
+} appIMUCalibrateData_t;
 
 typedef struct app_imu 
 {
@@ -24,6 +34,8 @@ typedef struct app_imu
     // 两个EXTI中断引脚
     bspGPIOInstance_t *accel_int_; 
     bspGPIOInstance_t *gyro_int_;
+
+    appIMUCalibrateData_t calibrate_data_;
 
     // imu数据
     appIMUData_t data_;
@@ -102,6 +114,58 @@ static appState_e appIMUInit()
         return app_imu_instance_.state_;
     }
 
+    // 进入校准模式
+    app_imu_instance_.state_ = APP_STATE_CALIBRATING;
+    return app_imu_instance_.state_;
+}
+
+static appState_e appIMUCalibrate()
+{
+    if (app_imu_instance_.state_ != APP_STATE_CALIBRATING) {
+        return app_imu_instance_.state_;
+    }
+
+    memset(&app_imu_instance_.calibrate_data_, 0, sizeof(appIMUCalibrateData_t));
+
+    uint32_t calibrate_count = 0;
+    deviceBMI088Status_e bmi088_state;
+    deviceBMI088Data_t bmi088_data;
+    uint32_t start_cnt = bspDWTGetCount();
+    while (true) {
+        bmi088_state = deviceBMI088UpdateData(app_imu_instance_.bmi088_instance_);
+        if (bmi088_state != DEVICE_BMI088_OK) {
+            app_imu_instance_.error_count_ ++;
+            continue;
+        }
+
+        deviceBMI088GetDataByOutputFrame(app_imu_instance_.bmi088_instance_, &bmi088_data, DEVICE_BMI088_OUTPUT_FRAME_FLU);
+        if (bmi088_data.gyro_rads_[0] > -APP_IMU_CALIBRATE_GYRO_TOLERANCE_RADS && 
+            bmi088_data.gyro_rads_[0] < APP_IMU_CALIBRATE_GYRO_TOLERANCE_RADS && 
+            bmi088_data.gyro_rads_[1] > -APP_IMU_CALIBRATE_GYRO_TOLERANCE_RADS && 
+            bmi088_data.gyro_rads_[1] < APP_IMU_CALIBRATE_GYRO_TOLERANCE_RADS && 
+            bmi088_data.gyro_rads_[2] > -APP_IMU_CALIBRATE_GYRO_TOLERANCE_RADS && 
+            bmi088_data.gyro_rads_[2] < APP_IMU_CALIBRATE_GYRO_TOLERANCE_RADS) {
+            calibrate_count ++;
+
+            app_imu_instance_.calibrate_data_.gyro_bias_rads_[0] += bmi088_data.gyro_rads_[0];
+            app_imu_instance_.calibrate_data_.gyro_bias_rads_[1] += bmi088_data.gyro_rads_[1];
+            app_imu_instance_.calibrate_data_.gyro_bias_rads_[2] += bmi088_data.gyro_rads_[2];
+        } else {
+            calibrate_count = 0;
+            memset(&app_imu_instance_.calibrate_data_, 0, sizeof(appIMUCalibrateData_t));
+            start_cnt = bspDWTGetCount();
+            continue;
+        }
+
+        if (bspDWTGetElapsedTimeUs(start_cnt) > APP_IMU_CALIBRATE_TIME_MS * 1000) {
+            break;
+        }
+    }
+
+    app_imu_instance_.calibrate_data_.gyro_bias_rads_[0] = app_imu_instance_.calibrate_data_.gyro_bias_rads_[0] / (float)calibrate_count;
+    app_imu_instance_.calibrate_data_.gyro_bias_rads_[1] = app_imu_instance_.calibrate_data_.gyro_bias_rads_[1] / (float)calibrate_count;
+    app_imu_instance_.calibrate_data_.gyro_bias_rads_[2] = app_imu_instance_.calibrate_data_.gyro_bias_rads_[2] / (float)calibrate_count;
+
     app_imu_instance_.state_ = APP_STATE_NORMAL;
     return app_imu_instance_.state_;
 }
@@ -144,6 +208,8 @@ void appIMUTaskEntry(void *argument)
     app_imu_instance_.task_handle_ = xTaskGetCurrentTaskHandle();
 
     (void)appIMUInit();
+
+    (void)appIMUCalibrate();
 
     deviceBMI088Mode_e bmi088_mode;
     deviceBMI088GetMode(app_imu_instance_.bmi088_instance_, &bmi088_mode);

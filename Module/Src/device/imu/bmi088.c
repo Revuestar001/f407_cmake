@@ -6,6 +6,7 @@
 #include "bmi088_register_address.h"
 #include "bsp_gpio.h"
 #include "bsp_spi.h"
+#include "user_def.h"
 
 // bmi088读写，读的时候地址高位一定为1，写的时候地址高位一定为0
 #define DEVICE_BMI088_REG_TO_WRITE_CMD(reg)  ((reg) & 0x7FU)
@@ -17,8 +18,6 @@
 #define DEVICE_BMI088_ACCEL_CONF_DEFAULT          0xAAU // 注意这个是normal滤波+400Hz更新，不是默认配置
 #define DEVICE_BMI088_ACCEL_SENSITIVITY_6G        (32768.0f / 6.0f)
 #define DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS    16.384f
-#define DEVICE_BMI088_STANDARD_GRAVITY_M_S2       9.80665f
-#define DEVICE_BMI088_DEG_TO_RAD                  0.01745329251994329577f
 
 typedef enum
 {
@@ -452,14 +451,14 @@ deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance)
     float data[3];
 
     // 当前换算系数对应 init() 里固定写入的量程配置，accel_单位为m/s^2，gyro_单位为rad/s
-    data[0] = ((float)accel_raw[0] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
-    data[1] = ((float)accel_raw[1] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
-    data[2] = ((float)accel_raw[2] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * DEVICE_BMI088_STANDARD_GRAVITY_M_S2;
+    data[0] = ((float)accel_raw[0] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
+    data[1] = ((float)accel_raw[1] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
+    data[2] = ((float)accel_raw[2] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
     deviceBMI088MapDataByInstallTransform(instance, data, instance->data_.accel_ms2_);
 
-    data[0] = ((float)gyro_raw[0] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
-    data[1] = ((float)gyro_raw[1] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
-    data[2] = ((float)gyro_raw[2] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEVICE_BMI088_DEG_TO_RAD;
+    data[0] = ((float)gyro_raw[0] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
+    data[1] = ((float)gyro_raw[1] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
+    data[2] = ((float)gyro_raw[2] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
     deviceBMI088MapDataByInstallTransform(instance, data, instance->data_.gyro_rads_);
 
     return DEVICE_BMI088_OK;

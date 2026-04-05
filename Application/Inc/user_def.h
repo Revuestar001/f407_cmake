@@ -1,0 +1,4 @@
+#pragma once
+
+#define STANDARD_GRAVITY_M_S2       9.80665f
+#define DEG_TO_RAD 0.01745329251994329577f
