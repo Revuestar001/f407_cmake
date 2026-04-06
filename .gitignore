@@ -44,11 +44,7 @@ Testing/
 /.metadata/
 
 # VS Code: keep sharable workspace files, ignore local-only files
-/.vscode/*
-!/.vscode/settings.json
-!/.vscode/tasks.json
-!/.vscode/launch.json
-!/.vscode/extensions.json
+/.vscode/
 
 # OS / editor noise
 Thumbs.db

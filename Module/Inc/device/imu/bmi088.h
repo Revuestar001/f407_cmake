@@ -45,6 +45,12 @@ typedef enum
     DEVICE_BMI088_NO_SENSOR = 0xFF,
 } deviceBMI088ErrorCode_e;
 
+typedef enum
+{
+    DEVICE_BMI088_OUTPUT_FRAME_FLU = 0,
+    DEVICE_BMI088_OUTPUT_FRAME_FRD,
+} deviceBMI088OutputFrame_e;
+
 typedef struct device_bmi088 deviceBMI088Instance_t;
 
 typedef void (*deviceBMI088DelayUsCallback_f)(uint32_t time_us);
@@ -64,14 +70,11 @@ typedef struct device_bmi088_config
 
 typedef struct device_bmi088_data
 {
-    uint8_t accel_chip_id_;
-    uint8_t gyro_chip_id_;
+    int16_t accel_raw_[3]; // bmi088原生轴数据！
+    int16_t gyro_raw_[3]; // bmi088原生轴数据！
 
-    int16_t accel_raw_[3];
-    int16_t gyro_raw_[3];
-
-    float accel_ms2_[3];
-    float gyro_rads_[3];
+    float accel_ms2_[3]; // 经过安装映射到FLU后的数据
+    float gyro_rads_[3]; // 经过安装映射到FLU后的数据
 } deviceBMI088Data_t;
 
 // 只是初始化实例，绑定板上资源
@@ -80,8 +83,10 @@ deviceBMI088Instance_t *deviceBMI088InstanceInit(const deviceBMI088Config_t *con
 deviceBMI088Status_e deviceBMI088Init(deviceBMI088Instance_t *instance);
 // 读取并更新一次数据
 deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance);
-// 获取当前传感器数据
+// 获取当前传感器数据，对于c板来说，bmi088直接输出的accel和gyro本来就定义在FLU下，注意F是robomaster字体为正时指向前部，即uart2标识-->uart1标识
 deviceBMI088Status_e deviceBMI088GetData(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out);
+// 获取转到对应机体坐标系下的当前传感器数据，默认bmi088与FLU对齐
+deviceBMI088Status_e deviceBMI088GetDataByOutputFrame(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out, deviceBMI088OutputFrame_e frame);
 // 配置bmi088的gyro数据就绪中断
 deviceBMI088Status_e deviceBMI088ConfigGyroDataReadyIT(deviceBMI088Instance_t *instance);
 deviceBMI088Status_e deviceBMI088GetMode(deviceBMI088Instance_t *instance, deviceBMI088Mode_e *mode_out);

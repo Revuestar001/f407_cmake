@@ -53,3 +53,4 @@ deviceIST8310Status_e deviceIST8310SetSingleMeasureMode(deviceIST8310Instance_t 
 deviceIST8310Status_e deviceIST8310UpdateData(deviceIST8310Instance_t *instance);
 deviceIST8310Status_e deviceIST8310IsDataReady(deviceIST8310Instance_t *instance);
 deviceIST8310Status_e deviceIST8310GetData(deviceIST8310Instance_t *instance, deviceIST8310Data_t *data_out);
+deviceIST8310Status_e deviceIST8310GetMode(deviceIST8310Instance_t *instance, deviceIST8310Mode_e *mode);

@@ -19,7 +19,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "cmsis_os2.h"
 #include "task.h"
 #include "main.h"
 #include "cmsis_os.h"
@@ -27,7 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "app_remote_control.h"
-#include "app_imu.h"
+#include "app_ins.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,9 +53,9 @@ const osThreadAttr_t remoteControlTask_attributes = {
 // volatile UBaseType_t remote_control_task_stack_high_water_mark_ = 0;
 // volatile UBaseType_t remote_control_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
 
-osThreadId_t appIMUTaskHandle;
-const osThreadAttr_t imuTask_attributes = {
-  .name = "imuTask_",
+osThreadId_t appINSTaskHandle;
+const osThreadAttr_t insTask_attributes = {
+  .name = "insTask_",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
@@ -75,7 +74,7 @@ const osThreadAttr_t defaultTask_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 void StartRemoteControlTask(void *argument);
-void StartIMUTask(void *argument);
+void StartINSTask(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -111,10 +110,11 @@ void MX_FREERTOS_Init(void) {
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   remoteControlTaskHandle = osThreadNew(StartRemoteControlTask, NULL, &remoteControlTask_attributes);
-  appIMUTaskHandle = osThreadNew(StartIMUTask, NULL, &imuTask_attributes);
+  appINSTaskHandle = osThreadNew(StartINSTask, NULL, &insTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -148,9 +148,9 @@ void StartRemoteControlTask(void *argument)
   appRemoteControlTaskEntry(argument);
 }
 
-void StartIMUTask(void *argument)
+void StartINSTask(void *argument)
 {
-  appIMUTaskEntry(argument);
+  appINSTaskEntry(argument);
 }
 /* USER CODE END Application */
 

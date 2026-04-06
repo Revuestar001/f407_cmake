@@ -142,6 +142,7 @@ NVIC.DMA2_Stream0_IRQn=true\:5\:0\:false\:false\:true\:true\:false\:true\:true
 NVIC.DMA2_Stream2_IRQn=true\:5\:0\:false\:false\:true\:true\:false\:true\:true
 NVIC.DMA2_Stream3_IRQn=true\:5\:0\:false\:false\:true\:true\:false\:true\:true
 NVIC.DebugMonitor_IRQn=true\:0\:0\:false\:false\:true\:false\:false\:false\:false
+NVIC.EXTI3_IRQn=true\:5\:0\:false\:false\:true\:true\:true\:true\:true
 NVIC.EXTI4_IRQn=true\:5\:0\:false\:false\:true\:true\:true\:true\:true
 NVIC.EXTI9_5_IRQn=true\:5\:0\:false\:false\:true\:true\:true\:true\:true
 NVIC.ForceEnableDMAVector=true
@@ -343,3 +344,4 @@ VP_STMicroelectronics.X-CUBE-ALGOBUILD_VS_DSPOoLibraryJjLibrary_1.4.0_1.4.0.Sign
 VP_SYS_VS_tim14.Mode=TIM14
 VP_SYS_VS_tim14.Signal=SYS_VS_tim14
 board=custom
+rtos.0.ip=FREERTOS
