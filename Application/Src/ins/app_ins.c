@@ -111,6 +111,23 @@ typedef struct app_ins_observation_data
     bool mag_is_new_; // 表示这个mag_timestamp_us_时间戳下的mag数据是否是新来的，用于ekf的mag update
 } appINSObservationData_t; // ekf输入数据
 
+typedef struct app_ins_mag_record_data
+{
+    uint32_t update_count_;
+    uint64_t latest_timestamp_us_;
+
+    uint8_t chip_id_;
+
+    int16_t mag_raw_before_transform_[3];
+    float mag_ut_[3];
+    float mag_norm_ut_;
+    float mag_horizontal_norm_ut_; // 仅看 FL 平面内的模长，方便平放转圈观察
+
+    bool min_max_initialized_;
+    float mag_min_ut_[3];
+    float mag_max_ut_[3];
+} appINSMagRecordData_t; // 给 live watch/调试器观察的磁力计记录数据
+
 typedef struct app_ins
 {
     // 当前 INS 任务句柄，在 task entry 中绑定
@@ -138,6 +155,7 @@ typedef struct app_ins
 
     appINSCalibrateData_t calibrate_data_;
     appINSObservationData_t observation_data_; // 校正过后的九轴数据，给ekf使用
+    appINSMagRecordData_t mag_record_data_; // 磁力计调试记录数据
 
     uint8_t error_count_;
 } appINSInstance_t;
@@ -173,6 +191,55 @@ static void appINSApplyAccelBiasScale(const float accel[3], const float accel_bi
     accel_out[0] = (accel[0] - accel_bias[0]) * accel_scale[0];
     accel_out[1] = (accel[1] - accel_bias[1]) * accel_scale[1];
     accel_out[2] = (accel[2] - accel_bias[2]) * accel_scale[2];
+}
+
+// 记录一份给调试器直接观察的磁力计数据：
+// 1. 原始值（交叉轴补偿前）
+// 2. 当前输出的 mag_ut_
+// 3. 三轴模长与平面模长
+// 4. 旋转过程中的 min/max，方便看点云范围是否合理
+static void appINSUpdateMAGRecordData(void)
+{
+    float horizontal_norm_square = 0.0f;
+    float horizontal_norm = 0.0f;
+
+    app_ins_.mag_record_data_.update_count_++;
+    app_ins_.mag_record_data_.latest_timestamp_us_ = app_ins_.observation_data_.mag_timestamp_us_;
+    app_ins_.mag_record_data_.chip_id_ = app_ins_.latest_mag_data_.chip_id_;
+
+    for (uint8_t i = 0; i < 3U; i++) {
+        app_ins_.mag_record_data_.mag_raw_before_transform_[i] = app_ins_.latest_mag_data_.mag_raw_before_transform[i];
+        app_ins_.mag_record_data_.mag_ut_[i] = app_ins_.latest_mag_data_.mag_ut_[i];
+    }
+
+    app_ins_.mag_record_data_.mag_norm_ut_ = appINSGetVectorNorm3f(app_ins_.latest_mag_data_.mag_ut_);
+
+    horizontal_norm_square =
+        app_ins_.latest_mag_data_.mag_ut_[0] * app_ins_.latest_mag_data_.mag_ut_[0] +
+        app_ins_.latest_mag_data_.mag_ut_[1] * app_ins_.latest_mag_data_.mag_ut_[1];
+
+    if (arm_sqrt_f32(horizontal_norm_square, &horizontal_norm) != ARM_MATH_SUCCESS) {
+        horizontal_norm = 0.0f;
+    }
+    app_ins_.mag_record_data_.mag_horizontal_norm_ut_ = horizontal_norm;
+
+    if (app_ins_.mag_record_data_.min_max_initialized_ == false) {
+        for (uint8_t i = 0; i < 3U; i++) {
+            app_ins_.mag_record_data_.mag_min_ut_[i] = app_ins_.latest_mag_data_.mag_ut_[i];
+            app_ins_.mag_record_data_.mag_max_ut_[i] = app_ins_.latest_mag_data_.mag_ut_[i];
+        }
+        app_ins_.mag_record_data_.min_max_initialized_ = true;
+        return;
+    }
+
+    for (uint8_t i = 0; i < 3U; i++) {
+        if (app_ins_.latest_mag_data_.mag_ut_[i] < app_ins_.mag_record_data_.mag_min_ut_[i]) {
+            app_ins_.mag_record_data_.mag_min_ut_[i] = app_ins_.latest_mag_data_.mag_ut_[i];
+        }
+        if (app_ins_.latest_mag_data_.mag_ut_[i] > app_ins_.mag_record_data_.mag_max_ut_[i]) {
+            app_ins_.mag_record_data_.mag_max_ut_[i] = app_ins_.latest_mag_data_.mag_ut_[i];
+        }
+    }
 }
 
 // 静止判据：
@@ -592,6 +659,7 @@ static bool appINSUpdateMAGSample(void)
     app_ins_.observation_data_.mag_ut_[2] = app_ins_.latest_mag_data_.mag_ut_[2];
     app_ins_.observation_data_.mag_timestamp_us_ = bspDWTGetAbsTimeUs();
     app_ins_.observation_data_.mag_is_new_ = true;
+    appINSUpdateMAGRecordData();
 
     if (deviceIST8310SetSingleMeasureMode(app_ins_.ist8310_instance_) != DEVICE_IST8310_OK) {
         app_ins_.error_count_++;

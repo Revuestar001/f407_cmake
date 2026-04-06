@@ -12,6 +12,22 @@
 #define DEVICE_IST8310_CROSS_AXIS_COMP_M (3.0f / 20.0f)
 #define DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT 50.0f
 #define DEVICE_IST8310_MILLI_GAUSS_TO_UT 0.1f
+#define DEVICE_IST8310_HARD_IRON_BIAS_X_UT 0.0f
+#define DEVICE_IST8310_HARD_IRON_BIAS_Y_UT -7.5f
+#define DEVICE_IST8310_HARD_IRON_BIAS_Z_UT -11.7f
+
+typedef enum
+{
+    DEVICE_IST8310_AXIS_X = 0,
+    DEVICE_IST8310_AXIS_Y,
+    DEVICE_IST8310_AXIS_Z,
+} deviceIST8310Axis_e; // 枚举ist8310的x y z轴
+
+typedef struct device_ist8310_install_transform
+{
+    deviceIST8310Axis_e axis_map[3]; // 坐标轴映射，表示机体坐标系的每一个轴，对应到ist8310的哪一个轴
+    int8_t axis_sign[3]; // 轴的正负
+} deviceIST8310InstallTransform_t; // 定义ist8310安装变换,暂时先不暴露，因为这个其实和板子固定了，从外部传入容易出错
 
 typedef struct device_ist8310 
 {
@@ -28,6 +44,7 @@ typedef struct device_ist8310
     bool in_single_measure_mode_; // ist8310不会连续测量，必须手动进入单次测量模式手动发起一次测量
 
     float A_ij_[IST8310_CROSS_AXIS_DATA_LEN / 2]; // 交叉轴补偿矩阵元素
+    deviceIST8310InstallTransform_t install_transform_;
 
     deviceIST8310Data_t data_;
 } deviceIST8310Instance_t;
@@ -80,6 +97,30 @@ static deviceIST8310Status_e deviceIST8310ComputeCrossAxisTransformationMatrix(d
     return DEVICE_IST8310_OK;
 }
 
+static void deviceIST8310MapDataByInstallTransform(deviceIST8310Instance_t *instance, const float data_raw[3], float data_mapped[3])
+{
+    if (instance == NULL || data_raw == NULL || data_mapped == NULL) {
+        return;
+    }
+
+    data_mapped[0] = (float)instance->install_transform_.axis_sign[0] * data_raw[instance->install_transform_.axis_map[0]];
+    data_mapped[1] = (float)instance->install_transform_.axis_sign[1] * data_raw[instance->install_transform_.axis_map[1]];
+    data_mapped[2] = (float)instance->install_transform_.axis_sign[2] * data_raw[instance->install_transform_.axis_map[2]];
+}
+
+// 最小hard-iron偏置试验：
+// 当前先基于已有实测，临时减去估计偏置，后续再换成正式标定参数
+static void deviceIST8310ApplyHardIronBias(const float mag_in_ut[3], float mag_out_ut[3])
+{
+    if (mag_in_ut == NULL || mag_out_ut == NULL) {
+        return;
+    }
+
+    mag_out_ut[0] = mag_in_ut[0] - DEVICE_IST8310_HARD_IRON_BIAS_X_UT;
+    mag_out_ut[1] = mag_in_ut[1] - DEVICE_IST8310_HARD_IRON_BIAS_Y_UT;
+    mag_out_ut[2] = mag_in_ut[2] - DEVICE_IST8310_HARD_IRON_BIAS_Z_UT;
+}
+
 deviceIST8310Instance_t *deviceIST8310InstanceInit(deviceIST8310Config_t *config)
 {
     if (config == NULL || 
@@ -103,6 +144,15 @@ deviceIST8310Instance_t *deviceIST8310InstanceInit(deviceIST8310Config_t *config
 
     instance->is_initialized_ = false;
     instance->in_single_measure_mode_ = false;
+    // 默认都是转到FLU下，根据ist8310的安装情况，转到FLU下
+    deviceIST8310InstallTransform_t install_transform;
+    install_transform.axis_map[0] = DEVICE_IST8310_AXIS_X;
+    install_transform.axis_map[1] = DEVICE_IST8310_AXIS_Y;
+    install_transform.axis_map[2] = DEVICE_IST8310_AXIS_Z;
+    install_transform.axis_sign[0] = 1;
+    install_transform.axis_sign[1] = 1;
+    install_transform.axis_sign[2] = 1;
+    instance->install_transform_ = install_transform;
 
     ist8310_memory_index_ ++;
 
@@ -237,9 +287,15 @@ deviceIST8310Status_e deviceIST8310UpdateData(deviceIST8310Instance_t *instance)
             instance->A_ij_[row * 3U + 2U] * (float)instance->data_.mag_raw_before_transform[2];
     }
 
+    float mag_after_transform_ut[3] = {0.0f};
     for (size_t i = 0; i < 3U; i++) {
-        instance->data_.mag_ut_[i] = mag_after_transform_mg[i] * DEVICE_IST8310_MILLI_GAUSS_TO_UT;
+        mag_after_transform_ut[i] = mag_after_transform_mg[i] * DEVICE_IST8310_MILLI_GAUSS_TO_UT;
     }
+    // 当前先约定驱动对外输出FLU机体系下的磁场数据
+    float mag_mapped_ut[3] = {0.0f};
+    deviceIST8310MapDataByInstallTransform(instance, mag_after_transform_ut, mag_mapped_ut);
+    // 在机体系下先尝试减去一组最小hard-iron偏置
+    deviceIST8310ApplyHardIronBias(mag_mapped_ut, instance->data_.mag_ut_);
 
     return DEVICE_IST8310_OK;
 }
