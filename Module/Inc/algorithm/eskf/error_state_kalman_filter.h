@@ -1,0 +1,134 @@
+#pragma once
+
+#include "arm_math.h"
+
+#include <math.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "quaternion.h"
+#include "matrix.h"
+
+#define ALGORITHM_ESKF_MAX_DT_S 0.01f
+#define ALGORITHM_ESKF_MIN_DT_S 0.0002f
+
+#define ALGORITHM_ESKF_IMU_SAMPLE_FREQUENCY 1000.0f // imu近似采样频率，只能用于初始化！
+#define ALGORITHM_ESKF_R_ACCEL_SCALE_FACTOR 10.0f // 加速度测量噪声放大系数
+#define ALGORITHM_ESKF_MAG_SAMPLE_FREQUENCY 200.0f // mag近似采样频率，只能用于初始化！
+#define ALGORITHM_ESKF_R_MAG_SCALE_FACTOR 50.0f // 磁力计测量噪声放大系数
+
+typedef enum
+{
+    ALGORITHM_ESKF_NOMINAL_STATE_DIM = 10, // quat + bias_gyro + bias_accel
+    ALGORITHM_ESKF_NOMINAL_STATE_QUAT_DIM = 4,
+    ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM = 3,
+    ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM = 3,
+    ALGORITHM_ESKF_ERROR_STATE_DIM = 9, // small angle error + delta bias_gyro + delta bias_accel
+    ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM = 3,
+    ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM = 3,
+    ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM = 3,
+    ALGORITHM_ESKF_MEASURE_GYRO_DIM = 3,
+    ALGORITHM_ESKF_MEASURE_ACCEL_DIM = 3,
+    ALGORITHM_ESKF_MEASURE_MAG_DIM = 3,
+} algorithmESKFDims_e;
+
+typedef enum
+{
+    ALGORITHM_ESKF_ENU_FLU = 0,
+} algorithmESKFFrame_e;
+
+typedef struct eskf_init_params
+{
+    mathQuaternion_t quat_init_;
+    float gyro_bias_init_[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM];
+    float accel_bias_init_[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM];
+
+    // 初始化状态误差协方差，姿态误差方差、gyro bias方差、accel bias方差
+    float angle_error_variance_[ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM];
+    float delta_bias_gyro_variance_[ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM];
+    float delta_bias_accel_variance_[ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM];
+
+    // 重力参考向量,比力，N系下
+    float gravity_ref_n_[ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+    // 地磁参考方向，N系下
+    float geo_mag_ref_dir_n_[ALGORITHM_ESKF_MEASURE_MAG_DIM];
+} algorithmESKFInitParams_t;
+
+typedef struct eskf_params
+{
+    algorithmESKFFrame_e frame_;
+
+    algorithmESKFInitParams_t init_params_;
+
+    // 过程噪声Q参数
+    float gyro_noise_rads_sqrt_hz_; // gyro白噪声密度，rad/s/sqrt(Hz)，对应小角度误差传播
+    float gyro_random_walk_rads2_sqrt_hz_; // gyro随机游走，rad/s2/sqrt(Hz)，对应delta bias_gyro 传播
+    float accel_random_walk_ms3_sqrt_hz_; // accel随机游走,m/s3/sqrt(Hz)，对应delta bias_accel 传播
+
+    // 测量/观测噪声R参数
+    float accel_noise_ms2_sqrt_hz_; // accel白噪声密度，m/s2/sqrt(Hz)，加速度计测量噪声
+    float mag_noise_ut_sqrt_hz_; // mag白噪声密度，ut/sqrt(Hz)，磁力计测量噪声
+} algorithmESKFParams_t;
+
+typedef struct eskf
+{
+    // 名义状态
+    mathQuaternion_t nominal_state_quat_;
+    mathMatrix_t nomial_state_bias_gyro_; 
+    mathMatrix_t nomial_state_bias_accel_;
+    float nomial_state_bias_gyro_data_[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM];
+    float nomial_state_bias_accel_data_[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM];
+
+    // 误差状态
+    mathMatrix_t error_states_;
+    float error_states_data_[ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+    // 状态误差协方差矩阵和噪声协方差矩阵
+    mathMatrix_t P_;
+    mathMatrix_t Q_; // 离散形式
+    mathMatrix_t R_accel_; // 离散形式
+    mathMatrix_t R_mag_; // 离散形式
+    float P_data_[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    float Q_data_[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    float R_accel_data_[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+    float R_mag_data_[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
+
+    // 误差状态一阶雅可比矩阵F、误差状态转移矩阵PHI、噪声输入矩阵G、测量一阶雅可比矩阵H、卡尔曼增益矩阵K、创新协方差矩阵S
+    mathMatrix_t F_; 
+    mathMatrix_t PHI_; // 离散形式
+    mathMatrix_t G_;
+    mathMatrix_t H_accel_;
+    mathMatrix_t H_mag_;
+    mathMatrix_t S_accel_;
+    mathMatrix_t S_mag_;
+    mathMatrix_t K_accel_;
+    mathMatrix_t K_mag_;
+    float F_data_[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    float PHI_data_[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    float G_data_[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    float H_accel_data_[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    float H_mag_data_[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    float S_accel_data_[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+    float S_mag_data_[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
+    float K_accel_data_[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+    float K_mag_data_[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
+    
+    // 重力参考向量,比力，N系下
+    mathMatrix_t gravity_ref_n_;
+    // 地磁参考方向，N系下
+    mathMatrix_t geo_mag_ref_dir_n_;
+
+    float dt_;
+
+    // 参数和初始化参数
+    algorithmESKFParams_t params_;
+
+    bool is_initialized_;
+} algorithmESKF_t;
+
+bool algorithmESKFInit(algorithmESKF_t *instance, algorithmESKFParams_t *params);
+// 使用gyro测量值进行预测
+// measurement必须是不包含在线bias校正的，否则eskf这里会重复去偏bias
+bool algorithmESKFGyroPredict(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM], float dt);
+// 使用accel测量值(只包含offline bias + scale)更新
+bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_MEASURE_ACCEL_DIM], float dt);

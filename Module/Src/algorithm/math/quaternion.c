@@ -163,7 +163,8 @@ bool mathQuaternionBuildFromSmallAngleError(const float angle_error_rad[3], math
     }
 
     if (error_norm < MATH_QUATERNION_EPSILON) {
-        return mathQuaternionSetIdentity(quat_out);
+        // 角度误差模长太小，使用线性近似构造四元数提高数值稳定性
+        return mathQuaternionBuildFromSmallAngleErrorLinear(angle_error_rad, quat_out);
     }
 
     axis[0] = angle_error_rad[0] / error_norm;

@@ -60,6 +60,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/device/magnetometer/ist8310.c
     Module/Src/algorithm/math/quaternion.c
     Module/Src/algorithm/math/vector3.c
+    Module/Src/algorithm/math/matrix.c
+    Module/Src/algorithm/eskf/error_state_kalman_filter.c
 
     Application/Src/remote_control/app_remote_control.c
     Application/Src/imu/app_imu.c
@@ -83,6 +85,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/device/imu/
     Module/Inc/device/magnetometer/
     Module/Inc/algorithm/math/
+    Module/Inc/algorithm/eskf/
 
     Application/Inc/remote_control/
     Application/Inc/imu/
