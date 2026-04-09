@@ -58,6 +58,71 @@ static bool computeQDiscrete(algorithmESKF_t *instance, float dt)
     return true;
 }
 
+static bool checkAccelMeasurementNormGate(const algorithmESKF_t *instance,
+                                          const float measurement[ALGORITHM_ESKF_MEASURE_ACCEL_DIM],
+                                          bool *pass_gate)
+{
+    if (instance == NULL || measurement == NULL || instance->gravity_ref_n_.pData == NULL || pass_gate == NULL) {
+        return false;
+    }
+
+    mathVector3_t accel_measure_vec3 = {0};
+    mathVector3_t gravity_ref_n_vec3 = {0};
+    float accel_measure_norm = 0.0f;
+    float gravity_ref_norm = 0.0f;
+    float accel_norm_error = 0.0f;
+
+    memcpy(accel_measure_vec3.v_, measurement, sizeof(accel_measure_vec3.v_));
+    memcpy(gravity_ref_n_vec3.v_, instance->gravity_ref_n_.pData, sizeof(gravity_ref_n_vec3.v_));
+
+    if (mathVec3Norm(&accel_measure_vec3, &accel_measure_norm) == false) {
+        return false;
+    }
+
+    if (mathVec3Norm(&gravity_ref_n_vec3, &gravity_ref_norm) == false) {
+        return false;
+    }
+
+    if (gravity_ref_norm <= 0.0f) {
+        return false;
+    }
+
+    accel_norm_error = fabsf(accel_measure_norm - gravity_ref_norm);
+
+    *pass_gate = (accel_norm_error <= gravity_ref_norm * ALGORITHM_ESKF_ACCEL_NORM_GATE_RATIO);
+
+    return true;
+}
+
+// 卡方检验
+static bool computeAccelInnovationChiSquare(const float accel_residual[ALGORITHM_ESKF_MEASURE_ACCEL_DIM],
+                                            const mathMatrix_t *S_accel_inv,
+                                            float *chi_square_out)
+{
+    if (accel_residual == NULL || S_accel_inv == NULL || S_accel_inv->pData == NULL || chi_square_out == NULL) {
+        return false;
+    }
+
+    if (S_accel_inv->numRows != ALGORITHM_ESKF_MEASURE_ACCEL_DIM || S_accel_inv->numCols != ALGORITHM_ESKF_MEASURE_ACCEL_DIM) {
+        return false;
+    }
+
+    float weighted_residual[ALGORITHM_ESKF_MEASURE_ACCEL_DIM] = {0.0f};
+    *chi_square_out = 0.0f;
+
+    for (size_t r = 0; r < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; r++) {
+        for (size_t c = 0; c < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; c++) {
+            weighted_residual[r] += S_accel_inv->pData[r * S_accel_inv->numCols + c] * accel_residual[c];
+        }
+    }
+
+    for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; i++) {
+        *chi_square_out += accel_residual[i] * weighted_residual[i];
+    }
+
+    return true;
+}
+
 static bool injectErrorToNominal(algorithmESKF_t *instance)
 {
     if (instance == NULL || instance->is_initialized_ == false) {
@@ -137,6 +202,7 @@ static bool updatePosteriorPAccel(algorithmESKF_t *instance)
     mathMatrixMult(&K_R_accel, &K_accel_T, &K_R_K_accel_T);
     // P_posterior = (I - K * H) * P_priori * (I - K * H)^T + K * R * K^T
     mathMatrixAdd(&I_K_H_accel_P_priori_I_K_H_accel_T, &K_R_K_accel_T, &instance->P_);
+    mathMatrixSetSymmetricInPlace(&instance->P_);
 
     return true;
 }
@@ -346,9 +412,16 @@ bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGOR
         return false;
     }
 
-    // 防止dt数值异常
-    dt = dt < ALGORITHM_ESKF_MIN_DT_S ? ALGORITHM_ESKF_MIN_DT_S : dt;
-    dt = dt > ALGORITHM_ESKF_MAX_DT_S ? ALGORITHM_ESKF_MAX_DT_S : dt;
+    (void)dt;
+
+    bool accel_norm_gate_pass = false;
+    if (checkAccelMeasurementNormGate(instance, measurement, &accel_norm_gate_pass) == false) {
+        return false;
+    }
+    // accel模长门限不通过，本轮不使用accel更新，但不视为滤波失败
+    if (accel_norm_gate_pass == false) {
+        return true;
+    }
 
     //
     // 预测加速度计测量值
@@ -390,16 +463,17 @@ bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGOR
     //
     // 计算accel观测/测量一阶雅可比矩阵H
     //
-    mathVector3_t neg_gravity_vec_b_vec3;
-    memcpy(neg_gravity_vec_b_vec3.v_, gravity_vec_b_data, sizeof(gravity_vec_b_data));
-    for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_ACCEL_DIM * 1U; i ++) {
-        neg_gravity_vec_b_vec3.v_[i] *= -1.0f;
+    // 请注意，这里计算H时,gravity_vec_b_skew的负号去掉了才正常，与推导不一致,基本上认为是推导错误！
+    if (mathMatrixSetZero(&instance->H_accel_) == false) {
+        return false;
     }
-    mathMatrix_t neg_gravity_vec_b_skew;
-    float neg_gravity_vec_b_skew_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
-    mathMatrixInit(&neg_gravity_vec_b_skew, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, neg_gravity_vec_b_skew_data);
-    mathVec3BuildSkewSymmetricMatrix(&neg_gravity_vec_b_vec3, neg_gravity_vec_b_skew_data);
-    mathMatrixSetBlockByMatrix(&instance->H_accel_, 0U, 0U, &neg_gravity_vec_b_skew);
+    mathVector3_t gravity_vec_b_vec3;
+    memcpy(gravity_vec_b_vec3.v_, gravity_vec_b_data, sizeof(gravity_vec_b_data));
+    mathMatrix_t gravity_vec_b_skew;
+    float gravity_vec_b_skew_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+    mathMatrixInit(&gravity_vec_b_skew, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, gravity_vec_b_skew_data);
+    mathVec3BuildSkewSymmetricMatrix(&gravity_vec_b_vec3, gravity_vec_b_skew_data);
+    mathMatrixSetBlockByMatrix(&instance->H_accel_, 0U, 0U, &gravity_vec_b_skew);
     mathMatrixSetBlockIdentity(&instance->H_accel_, 0U, ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM + ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM, ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM);
 
     // 
@@ -430,7 +504,17 @@ bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGOR
     mathMatrix_t S_accel_inv;
     float S_accel_inv_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
     mathMatrixInit(&S_accel_inv, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, S_accel_inv_data);
-    mathMatrixInverse(&instance->S_accel_, &S_accel_inv);
+    if (mathMatrixInverse(&instance->S_accel_, &S_accel_inv) != ARM_MATH_SUCCESS) {
+        return false;
+    }
+    // 创新卡方门限不通过，本轮不使用accel更新，但不视为滤波失败
+    float accel_innovation_chi_square = 0.0f;
+    if (computeAccelInnovationChiSquare(accel_residual_data, &S_accel_inv, &accel_innovation_chi_square) == false) {
+        return false;
+    }
+    if (accel_innovation_chi_square > ALGORITHM_ESKF_ACCEL_CHI_SQUARE_THRESHOLD) {
+        return true;
+    }
     mathMatrixMult(&P_priori_H_accel_T, &S_accel_inv, &instance->K_accel_);
 
     //

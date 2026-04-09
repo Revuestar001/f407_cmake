@@ -16,6 +16,8 @@
 #define ALGORITHM_ESKF_R_ACCEL_SCALE_FACTOR 10.0f // 加速度测量噪声放大系数
 #define ALGORITHM_ESKF_MAG_SAMPLE_FREQUENCY 200.0f // mag近似采样频率，只能用于初始化！
 #define ALGORITHM_ESKF_R_MAG_SCALE_FACTOR 50.0f // 磁力计测量噪声放大系数
+#define ALGORITHM_ESKF_ACCEL_NORM_GATE_RATIO 0.15f // accel模长门限，允许相对重力参考模长的偏差比例，*100%
+#define ALGORITHM_ESKF_ACCEL_CHI_SQUARE_THRESHOLD 11.345f // 3自由度卡方门限，约等于99%置信水平
 
 typedef enum
 {
@@ -131,4 +133,5 @@ bool algorithmESKFInit(algorithmESKF_t *instance, algorithmESKFParams_t *params)
 // measurement必须是不包含在线bias校正的，否则eskf这里会重复去偏bias
 bool algorithmESKFGyroPredict(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM], float dt);
 // 使用accel测量值(只包含offline bias + scale)更新
+// dt当前保留接口，按当前同步IMU语义暂未使用
 bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_MEASURE_ACCEL_DIM], float dt);

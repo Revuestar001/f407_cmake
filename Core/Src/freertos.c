@@ -56,11 +56,11 @@ const osThreadAttr_t remoteControlTask_attributes = {
 osThreadId_t appINSTaskHandle;
 const osThreadAttr_t insTask_attributes = {
   .name = "insTask_",
-  .stack_size = 256 * 4,
+  .stack_size = 256 * 16,
   .priority = (osPriority_t) osPriorityHigh,
 };
-// volatile UBaseType_t imu_task_stack_high_water_mark_ = 0;
-// volatile UBaseType_t imu_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
+volatile UBaseType_t ins_task_stack_high_water_mark_ = 0;
+volatile UBaseType_t ins_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */

@@ -16,6 +16,7 @@
 #include "bsp_gpio.h"
 #include "bmi088.h"
 #include "ist8310.h"
+#include "error_state_kalman_filter.h"
 #include "app_ins.h"
 #include "app_def.h"
 #include "user_def.h"
@@ -35,6 +36,15 @@
 #define APP_INS_ACCEL_SCALE_X_OFFLINE 1.00562215f
 #define APP_INS_ACCEL_SCALE_Y_OFFLINE 1.00878429f
 #define APP_INS_ACCEL_SCALE_Z_OFFLINE 1.0059551f
+
+#define APP_INS_ESKF_INIT_ANGLE_ERROR_STD_RAD (10.0f * DEG_TO_RAD)
+#define APP_INS_ESKF_INIT_GYRO_BIAS_STD_RADS 0.05f
+#define APP_INS_ESKF_INIT_ACCEL_BIAS_STD_MS2 0.2f
+#define APP_INS_ESKF_GYRO_NOISE_RADS_SQRT_HZ 0.02f
+#define APP_INS_ESKF_GYRO_RANDOM_WALK_RADS2_SQRT_HZ 0.001f
+#define APP_INS_ESKF_ACCEL_RANDOM_WALK_MS3_SQRT_HZ 0.05f
+#define APP_INS_ESKF_ACCEL_NOISE_MS2_SQRT_HZ 0.2f
+#define APP_INS_ESKF_MAG_NOISE_UT_SQRT_HZ 1.0f
 
 // app_ins 的工作模式：
 // 1. 正常运行
@@ -101,15 +111,15 @@ typedef struct app_ins_calibrate_data
 
 typedef struct app_ins_observation_data
 {
-    // 给 EKF 使用的校准后数据
-    float accel_corrected_ms2_[3];
-    float gyro_corrected_rads_[3];
+    // 给 EKF 使用的数据
+    float accel_offline_corrected_ms2_[3];
+    float gyro_no_correct_rads_[3];
     float mag_ut_[3];
 
     uint64_t imu_timestamp_us_; // imu时间戳
     uint64_t mag_timestamp_us_; // mag时间戳
     bool mag_is_new_; // 表示这个mag_timestamp_us_时间戳下的mag数据是否是新来的，用于ekf的mag update
-} appINSObservationData_t; // ekf输入数据
+} appINSObservationData_t; // ekf输入数据,请注意imu mag数据不同步
 
 typedef struct app_ins_mag_record_data
 {
@@ -154,7 +164,12 @@ typedef struct app_ins
     bool mag_data_valid_;
 
     appINSCalibrateData_t calibrate_data_;
-    appINSObservationData_t observation_data_; // 校正过后的九轴数据，给ekf使用
+
+    appINSObservationData_t observation_data_; // 九轴数据，给ekf使用,imu mag数据不同步！
+    algorithmESKF_t eskf_;
+    bool eskf_initialized_;
+    uint64_t last_ekf_imu_timestamp_us_;
+    
     appINSMagRecordData_t mag_record_data_; // 磁力计调试记录数据
 
     uint8_t error_count_;
@@ -191,6 +206,84 @@ static void appINSApplyAccelBiasScale(const float accel[3], const float accel_bi
     accel_out[0] = (accel[0] - accel_bias[0]) * accel_scale[0];
     accel_out[1] = (accel[1] - accel_bias[1]) * accel_scale[1];
     accel_out[2] = (accel[2] - accel_bias[2]) * accel_scale[2];
+}
+
+static void appINSUpdateOutputDataFromESKF(void)
+{
+    app_ins_.data_.valid_ = app_ins_.eskf_initialized_;
+    app_ins_.data_.timestamp_ = app_ins_.observation_data_.imu_timestamp_us_;
+    app_ins_.data_.dt_s_ = app_ins_.eskf_.dt_;
+
+    memcpy(app_ins_.data_.quat_,
+           app_ins_.eskf_.nominal_state_quat_.q_,
+           sizeof(app_ins_.data_.quat_));
+
+    if (mathQuaternionToEulerZYX(&app_ins_.eskf_.nominal_state_quat_, app_ins_.data_.euler_zyx_rad_) == false) {
+        memset(app_ins_.data_.euler_zyx_rad_, 0, sizeof(app_ins_.data_.euler_zyx_rad_));
+    }
+
+    memcpy(app_ins_.data_.gyro_bias_rads_,
+           app_ins_.eskf_.nomial_state_bias_gyro_data_,
+           sizeof(app_ins_.data_.gyro_bias_rads_));
+    memcpy(app_ins_.data_.accel_bias_ms2_,
+           app_ins_.eskf_.nomial_state_bias_accel_data_,
+           sizeof(app_ins_.data_.accel_bias_ms2_));
+}
+
+static bool appINSInitESKF(void)
+{
+    algorithmESKFParams_t params;
+    float angle_error_variance = APP_INS_ESKF_INIT_ANGLE_ERROR_STD_RAD * APP_INS_ESKF_INIT_ANGLE_ERROR_STD_RAD;
+    float gyro_bias_variance = APP_INS_ESKF_INIT_GYRO_BIAS_STD_RADS * APP_INS_ESKF_INIT_GYRO_BIAS_STD_RADS;
+    float accel_bias_variance = APP_INS_ESKF_INIT_ACCEL_BIAS_STD_MS2 * APP_INS_ESKF_INIT_ACCEL_BIAS_STD_MS2;
+
+    memset(&params, 0, sizeof(params));
+
+    params.frame_ = ALGORITHM_ESKF_ENU_FLU;
+    if (mathQuaternionSetIdentity(&params.init_params_.quat_init_) == false) {
+        return false;
+    }
+
+    memcpy(params.init_params_.gyro_bias_init_,
+           app_ins_.calibrate_data_.gyro_bias_rads_,
+           sizeof(params.init_params_.gyro_bias_init_));
+    memset(params.init_params_.accel_bias_init_, 0, sizeof(params.init_params_.accel_bias_init_));
+
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM; i++) {
+        params.init_params_.angle_error_variance_[i] = angle_error_variance;
+    }
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM; i++) {
+        params.init_params_.delta_bias_gyro_variance_[i] = gyro_bias_variance;
+    }
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM; i++) {
+        params.init_params_.delta_bias_accel_variance_[i] = accel_bias_variance;
+    }
+
+    params.init_params_.gravity_ref_n_[0] = 0.0f;
+    params.init_params_.gravity_ref_n_[1] = 0.0f;
+    params.init_params_.gravity_ref_n_[2] = STANDARD_GRAVITY_M_S2;
+
+    // mag update 还没接入，先给一个合法占位参考方向
+    params.init_params_.geo_mag_ref_dir_n_[0] = 1.0f;
+    params.init_params_.geo_mag_ref_dir_n_[1] = 0.0f;
+    params.init_params_.geo_mag_ref_dir_n_[2] = 0.0f;
+
+    params.gyro_noise_rads_sqrt_hz_ = APP_INS_ESKF_GYRO_NOISE_RADS_SQRT_HZ;
+    params.gyro_random_walk_rads2_sqrt_hz_ = APP_INS_ESKF_GYRO_RANDOM_WALK_RADS2_SQRT_HZ;
+    params.accel_random_walk_ms3_sqrt_hz_ = APP_INS_ESKF_ACCEL_RANDOM_WALK_MS3_SQRT_HZ;
+    params.accel_noise_ms2_sqrt_hz_ = APP_INS_ESKF_ACCEL_NOISE_MS2_SQRT_HZ;
+    params.mag_noise_ut_sqrt_hz_ = APP_INS_ESKF_MAG_NOISE_UT_SQRT_HZ;
+
+    if (algorithmESKFInit(&app_ins_.eskf_, &params) == false) {
+        return false;
+    }
+
+    app_ins_.eskf_initialized_ = true;
+    app_ins_.last_ekf_imu_timestamp_us_ = 0U;
+    memset(&app_ins_.data_, 0, sizeof(appINSData_t));
+    appINSUpdateOutputDataFromESKF();
+
+    return true;
 }
 
 // 记录一份给调试器直接观察的磁力计数据：
@@ -627,8 +720,10 @@ static bool appINSUpdateIMUSample(void)
     // 六面标定复用同一条 IMU 更新链推进，只有在accel六面校准模式下才进行校准，否则跳过
     appINSProcessAccelSixFaceCalibrate();
 
-    appINSApplyGyroBias(app_ins_.latest_imu_data_.gyro_rads_, app_ins_.calibrate_data_.gyro_bias_rads_, app_ins_.observation_data_.gyro_corrected_rads_);
-    appINSApplyAccelBiasScale(app_ins_.latest_imu_data_.accel_ms2_, app_ins_.calibrate_data_.accel_bias_ms2_, app_ins_.calibrate_data_.accel_scale_, app_ins_.observation_data_.accel_corrected_ms2_);
+    // 不再校正gyro
+    // appINSApplyGyroBias(app_ins_.latest_imu_data_.gyro_rads_, app_ins_.calibrate_data_.gyro_bias_rads_, app_ins_.observation_data_.gyro_corrected_rads_);
+    memcpy(app_ins_.observation_data_.gyro_no_correct_rads_, app_ins_.latest_imu_data_.gyro_rads_, sizeof(app_ins_.observation_data_.gyro_no_correct_rads_));
+    appINSApplyAccelBiasScale(app_ins_.latest_imu_data_.accel_ms2_, app_ins_.calibrate_data_.accel_bias_ms2_, app_ins_.calibrate_data_.accel_scale_, app_ins_.observation_data_.accel_offline_corrected_ms2_);
     app_ins_.observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
 
     return true;
@@ -708,6 +803,11 @@ static void appINSProcessStartupStage(void)
         }
         break;
     case APP_INS_EKF_INIT:
+        if (appINSInitESKF() == false) {
+            app_ins_.error_count_++;
+            app_ins_.stage_ = APP_INS_DEGRADED;
+            return;
+        }
         app_ins_.stage_ = APP_INS_RUNNING;
         break;
     case APP_INS_RUNNING:
@@ -719,6 +819,53 @@ static void appINSProcessStartupStage(void)
 // EKF 预留入口
 static bool appINSRunEKF(void)
 {
+    uint64_t imu_timestamp_us = app_ins_.observation_data_.imu_timestamp_us_;
+    float dt_s = 0.0f;
+
+    if (app_ins_.eskf_initialized_ == false || imu_timestamp_us == 0U) {
+        return false;
+    }
+
+    // 同一帧 IMU 数据只允许驱动一次 predict/update
+    if (imu_timestamp_us == app_ins_.last_ekf_imu_timestamp_us_) {
+        if (app_ins_.observation_data_.mag_is_new_ == true) {
+            // mag update 暂未接入，先把事件位消费掉，避免旧事件一直保留
+            app_ins_.observation_data_.mag_is_new_ = false;
+        }
+        return true;
+    }
+
+    // 第一帧没有有效 dt，先只用 accel 做一次姿态校正
+    if (app_ins_.last_ekf_imu_timestamp_us_ == 0U) {
+        app_ins_.last_ekf_imu_timestamp_us_ = imu_timestamp_us;
+
+        if (algorithmESKFAccelUpdate(&app_ins_.eskf_, app_ins_.observation_data_.accel_offline_corrected_ms2_, 0.0f) == false) {
+            return false;
+        }
+
+        appINSUpdateOutputDataFromESKF();
+        app_ins_.observation_data_.mag_is_new_ = false;
+        return true;
+    }
+
+    dt_s = (float)(imu_timestamp_us - app_ins_.last_ekf_imu_timestamp_us_) * 1.0e-6f;
+    app_ins_.last_ekf_imu_timestamp_us_ = imu_timestamp_us;
+
+    if (algorithmESKFGyroPredict(&app_ins_.eskf_, app_ins_.observation_data_.gyro_no_correct_rads_, dt_s) == false) {
+        return false;
+    }
+
+    if (algorithmESKFAccelUpdate(&app_ins_.eskf_, app_ins_.observation_data_.accel_offline_corrected_ms2_, dt_s) == false) {
+        return false;
+    }
+
+    // mag update 暂未接入，当前只消费事件位
+    if (app_ins_.observation_data_.mag_is_new_ == true) {
+        app_ins_.observation_data_.mag_is_new_ = false;
+    }
+
+    appINSUpdateOutputDataFromESKF();
+
     return true;
 }
 
@@ -778,7 +925,10 @@ void appINSTaskEntry(void *argument)
         }
 
         if (app_ins_.stage_ == APP_INS_RUNNING && app_ins_.mode_ == APP_INS_SERVICE_NORMAL) {
-            appINSRunEKF();
+            if (appINSRunEKF() == false) {
+                app_ins_.error_count_++;
+                app_ins_.stage_ = APP_INS_DEGRADED;
+            }
         }
 
         ins_loop_time = bspDWTGetElapsedTimeUs(start_cnt);

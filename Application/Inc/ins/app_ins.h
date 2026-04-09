@@ -10,8 +10,14 @@
 
 typedef struct app_INS_data
 {
-    // INS 对外输出，当前先只保留时间戳，后面再接 EKF 输出
+    // INS 对外输出
+    bool valid_;
     uint64_t timestamp_;
+    float dt_s_;
+    float quat_[4];
+    float euler_zyx_rad_[3];
+    float gyro_bias_rads_[3];
+    float accel_bias_ms2_[3];
 } appINSData_t;
 
 appState_e appINSGetAPPState(void);
