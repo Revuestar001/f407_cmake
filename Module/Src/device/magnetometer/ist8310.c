@@ -15,6 +15,8 @@
 #define DEVICE_IST8310_HARD_IRON_BIAS_X_UT 0.0f
 #define DEVICE_IST8310_HARD_IRON_BIAS_Y_UT -7.5f
 #define DEVICE_IST8310_HARD_IRON_BIAS_Z_UT -11.7f
+// #define DEVICE_IST8310_HARD_IRON_BIAS_Y_UT 0.0f
+// #define DEVICE_IST8310_HARD_IRON_BIAS_Z_UT 0.0f
 
 typedef enum
 {
@@ -74,25 +76,39 @@ static deviceIST8310Status_e deviceIST8310ComputeCrossAxisTransformationMatrix(d
     const float x32 = data_decoded[7];
     const float x33 = data_decoded[8];
 
+    // 按 IST8310 user manual 的矩阵排布：
+    // [X11 X21 X31
+    //  X12 X22 X32
+    //  X13 X23 X33]
+    const float m11 = x11;
+    const float m12 = x21;
+    const float m13 = x31;
+    const float m21 = x12;
+    const float m22 = x22;
+    const float m23 = x32;
+    const float m31 = x13;
+    const float m32 = x23;
+    const float m33 = x33;
+
     const float det =
-        x11 * (x22 * x33 - x23 * x32) -
-        x12 * (x21 * x33 - x23 * x31) +
-        x13 * (x21 * x32 - x22 * x31);
+        m11 * (m22 * m33 - m23 * m32) -
+        m12 * (m21 * m33 - m23 * m31) +
+        m13 * (m21 * m32 - m22 * m31);
 
     if (det > -1.0e-6f && det < 1.0e-6f) {
         return DEVICE_IST8310_ERROR;
     }
 
     const float inv_det = 1.0f / det;
-    instance->A_ij_[0] = (x22 * x33 - x23 * x32) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
-    instance->A_ij_[1] = (x13 * x32 - x12 * x33) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
-    instance->A_ij_[2] = (x12 * x23 - x13 * x22) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
-    instance->A_ij_[3] = (x23 * x31 - x21 * x33) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
-    instance->A_ij_[4] = (x11 * x33 - x13 * x31) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
-    instance->A_ij_[5] = (x13 * x21 - x11 * x23) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
-    instance->A_ij_[6] = (x21 * x32 - x22 * x31) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
-    instance->A_ij_[7] = (x12 * x31 - x11 * x32) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
-    instance->A_ij_[8] = (x11 * x22 - x12 * x21) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[0] = (m22 * m33 - m23 * m32) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[1] = (m13 * m32 - m12 * m33) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[2] = (m12 * m23 - m13 * m22) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[3] = (m23 * m31 - m21 * m33) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[4] = (m11 * m33 - m13 * m31) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[5] = (m13 * m21 - m11 * m23) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[6] = (m21 * m32 - m22 * m31) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[7] = (m12 * m31 - m11 * m32) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
+    instance->A_ij_[8] = (m11 * m22 - m12 * m21) * inv_det * DEVICE_IST8310_CROSS_AXIS_TRANSFERMATION_COEFFICIENT;
 
     return DEVICE_IST8310_OK;
 }
@@ -151,7 +167,7 @@ deviceIST8310Instance_t *deviceIST8310InstanceInit(deviceIST8310Config_t *config
     install_transform.axis_map[2] = DEVICE_IST8310_AXIS_Z;
     install_transform.axis_sign[0] = 1;
     install_transform.axis_sign[1] = 1;
-    install_transform.axis_sign[2] = 1;
+    install_transform.axis_sign[2] = -1;
     instance->install_transform_ = install_transform;
 
     ist8310_memory_index_ ++;
@@ -291,11 +307,12 @@ deviceIST8310Status_e deviceIST8310UpdateData(deviceIST8310Instance_t *instance)
     for (size_t i = 0; i < 3U; i++) {
         mag_after_transform_ut[i] = mag_after_transform_mg[i] * DEVICE_IST8310_MILLI_GAUSS_TO_UT;
     }
+
+    // 先尝试减去一组最小hard-iron偏置,再映射到FLU
+    float mag_hard_iron_ut[3] = {0.0f};
+    deviceIST8310ApplyHardIronBias(mag_after_transform_ut, mag_hard_iron_ut);
     // 当前先约定驱动对外输出FLU机体系下的磁场数据
-    float mag_mapped_ut[3] = {0.0f};
-    deviceIST8310MapDataByInstallTransform(instance, mag_after_transform_ut, mag_mapped_ut);
-    // 在机体系下先尝试减去一组最小hard-iron偏置
-    deviceIST8310ApplyHardIronBias(mag_mapped_ut, instance->data_.mag_ut_);
+    deviceIST8310MapDataByInstallTransform(instance, mag_hard_iron_ut, instance->data_.mag_ut_);
 
     return DEVICE_IST8310_OK;
 }

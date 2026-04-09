@@ -194,6 +194,63 @@ bool mathQuaternionBuildFromSmallAngleErrorLinear(const float angle_error_rad[3]
     return mathQuaternionNormalizeInPlace(quat_out);
 }
 
+bool mathQuaternionBuildFromRotationMatrix(const float matrix[9], mathQuaternion_t *quat_out)
+{
+    if (matrix == NULL || quat_out == NULL) {
+        return false;
+    }
+
+    float trace = matrix[0] + matrix[4] + matrix[8];
+    float s = 0.0f;
+
+    if (trace > 0.0f) {
+        if (arm_sqrt_f32(trace + 1.0f, &s) != ARM_MATH_SUCCESS) {
+            return false;
+        }
+        s *= 2.0f;
+        quat_out->q_[MATH_QUATERNION_W] = 0.25f * s;
+        quat_out->q_[MATH_QUATERNION_X] = (matrix[7] - matrix[5]) / s;
+        quat_out->q_[MATH_QUATERNION_Y] = (matrix[2] - matrix[6]) / s;
+        quat_out->q_[MATH_QUATERNION_Z] = (matrix[3] - matrix[1]) / s;
+    } else if (matrix[0] > matrix[4] && matrix[0] > matrix[8]) {
+        if (arm_sqrt_f32(1.0f + matrix[0] - matrix[4] - matrix[8], &s) != ARM_MATH_SUCCESS) {
+            return false;
+        }
+        s *= 2.0f;
+        quat_out->q_[MATH_QUATERNION_W] = (matrix[7] - matrix[5]) / s;
+        quat_out->q_[MATH_QUATERNION_X] = 0.25f * s;
+        quat_out->q_[MATH_QUATERNION_Y] = (matrix[1] + matrix[3]) / s;
+        quat_out->q_[MATH_QUATERNION_Z] = (matrix[2] + matrix[6]) / s;
+    } else if (matrix[4] > matrix[8]) {
+        if (arm_sqrt_f32(1.0f + matrix[4] - matrix[0] - matrix[8], &s) != ARM_MATH_SUCCESS) {
+            return false;
+        }
+        s *= 2.0f;
+        quat_out->q_[MATH_QUATERNION_W] = (matrix[2] - matrix[6]) / s;
+        quat_out->q_[MATH_QUATERNION_X] = (matrix[1] + matrix[3]) / s;
+        quat_out->q_[MATH_QUATERNION_Y] = 0.25f * s;
+        quat_out->q_[MATH_QUATERNION_Z] = (matrix[5] + matrix[7]) / s;
+    } else {
+        if (arm_sqrt_f32(1.0f + matrix[8] - matrix[0] - matrix[4], &s) != ARM_MATH_SUCCESS) {
+            return false;
+        }
+        s *= 2.0f;
+        quat_out->q_[MATH_QUATERNION_W] = (matrix[3] - matrix[1]) / s;
+        quat_out->q_[MATH_QUATERNION_X] = (matrix[2] + matrix[6]) / s;
+        quat_out->q_[MATH_QUATERNION_Y] = (matrix[5] + matrix[7]) / s;
+        quat_out->q_[MATH_QUATERNION_Z] = 0.25f * s;
+    }
+
+    if (quat_out->q_[MATH_QUATERNION_W] < 0.0f) {
+        quat_out->q_[MATH_QUATERNION_W] *= -1.0f;
+        quat_out->q_[MATH_QUATERNION_X] *= -1.0f;
+        quat_out->q_[MATH_QUATERNION_Y] *= -1.0f;
+        quat_out->q_[MATH_QUATERNION_Z] *= -1.0f;
+    }
+
+    return mathQuaternionNormalizeInPlace(quat_out);
+}
+
 // 通过小角度误差向量更新四元数，这个小角度误差定义在body系下
 bool mathQuaternionUpdateBySmallAngleErrorInPlace(const float angle_error_rad[3], mathQuaternion_t *quat)
 {

@@ -1,6 +1,7 @@
 #include "arm_math.h"
 
 #include <stdbool.h>
+#include <string.h>
 
 #include "vector3.h"
 
@@ -59,6 +60,22 @@ bool mathVec3Normalize(const mathVector3_t *vec3, mathVector3_t *vec3_out)
     vec3_temp.v_[MATH_VECTOR3_Z] /= vec3_norm;
 
     *vec3_out = vec3_temp;
+    return true;
+}
+
+bool mathVec3NormalizeInPlace(mathVector3_t *vec3)
+{
+    if (vec3 == NULL) {
+        return false;
+    }
+
+    mathVector3_t vec3_temp;
+
+    if (mathVec3Normalize(vec3, &vec3_temp) == false) {
+        return false;
+    }
+    
+    *vec3 = vec3_temp;
     return true;
 }
 

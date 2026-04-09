@@ -29,6 +29,7 @@ bool mathQuaternionConjugate(const mathQuaternion_t *quat, mathQuaternion_t *qua
 bool mathQuaternionMultiply(const mathQuaternion_t *quat_1, const mathQuaternion_t *quat_2, mathQuaternion_t *quat_out);
 bool mathQuaternionBuildFromSmallAngleError(const float angle_error_rad[3], mathQuaternion_t *quat_out);
 bool mathQuaternionBuildFromSmallAngleErrorLinear(const float angle_error_rad[3], mathQuaternion_t *quat_out);
+bool mathQuaternionBuildFromRotationMatrix(const float matrix[9], mathQuaternion_t *quat_out);
 bool mathQuaternionUpdateBySmallAngleErrorInPlace(const float angle_error_rad[3], mathQuaternion_t *quat);
 bool mathQuaternionUpdateBySmallAngleError(const float angle_error_rad[3], const mathQuaternion_t *quat, mathQuaternion_t *quat_out);
 bool mathQuaternionToRotationMatrix(const mathQuaternion_t *quat, float matrix_out[9]);

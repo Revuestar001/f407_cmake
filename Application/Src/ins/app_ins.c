@@ -17,6 +17,8 @@
 #include "bmi088.h"
 #include "ist8310.h"
 #include "error_state_kalman_filter.h"
+#include "matrix.h"
+#include "vector3.h"
 #include "app_ins.h"
 #include "app_def.h"
 #include "user_def.h"
@@ -45,6 +47,10 @@
 #define APP_INS_ESKF_ACCEL_RANDOM_WALK_MS3_SQRT_HZ 0.05f
 #define APP_INS_ESKF_ACCEL_NOISE_MS2_SQRT_HZ 0.2f
 #define APP_INS_ESKF_MAG_NOISE_UT_SQRT_HZ 1.0f
+#define APP_INS_ESKF_MAG_DECLINATION_RAD (-4.1333f * DEG_TO_RAD) // 磁偏角
+#define APP_INS_ESKF_MAG_INCLINATION_RAD (-44.1f * DEG_TO_RAD) // 磁倾角
+#define APP_INS_ESKF_MAG_FIELD_STRENGTH_UT 48.9795f // 总场强
+#define APP_INS_ESKF_MAG_MAX_DELAY_TIME_S 0.01f
 
 // app_ins 的工作模式：
 // 1. 正常运行
@@ -166,13 +172,14 @@ typedef struct app_ins
     appINSCalibrateData_t calibrate_data_;
 
     appINSObservationData_t observation_data_; // 九轴数据，给ekf使用,imu mag数据不同步！
+    mathQuaternion_t init_quat_; // 初始姿态四元数
     algorithmESKF_t eskf_;
     bool eskf_initialized_;
     uint64_t last_ekf_imu_timestamp_us_;
-    
+
     appINSMagRecordData_t mag_record_data_; // 磁力计调试记录数据
 
-    uint8_t error_count_;
+    uint16_t error_count_;
 } appINSInstance_t;
 
 static appINSInstance_t app_ins_ = {0};
@@ -193,12 +200,12 @@ static float appINSGetVectorNorm3f(const float vector[3])
 }
 
 // gyro 校准应用点：只减 bias
-static void appINSApplyGyroBias(const float gyro[3], const float gyro_bias[3], float gyro_out[3])
-{
-    gyro_out[0] = gyro[0] - gyro_bias[0];
-    gyro_out[1] = gyro[1] - gyro_bias[1];
-    gyro_out[2] = gyro[2] - gyro_bias[2];
-}
+// static void appINSApplyGyroBias(const float gyro[3], const float gyro_bias[3], float gyro_out[3])
+// {
+//     gyro_out[0] = gyro[0] - gyro_bias[0];
+//     gyro_out[1] = gyro[1] - gyro_bias[1];
+//     gyro_out[2] = gyro[2] - gyro_bias[2];
+// }
 
 // accel 校准应用点：每轴 bias + scale
 static void appINSApplyAccelBiasScale(const float accel[3], const float accel_bias[3], const float accel_scale[3], float accel_out[3])
@@ -230,6 +237,107 @@ static void appINSUpdateOutputDataFromESKF(void)
            sizeof(app_ins_.data_.accel_bias_ms2_));
 }
 
+static bool appINSBuildInitQuaternion(void)
+{
+    mathVector3_t accel_measure_b = {0};
+    mathVector3_t mag_measure_b = {0};
+    mathVector3_t gravity_ref_unit_n = {0};
+    mathVector3_t geo_mag_ref_unit_n = {0};
+    mathVector3_t triad_ref_2_n = {0}; // n系，TRIAD方法构造的导航系（世界系）第二轴，第一轴是参考重力矢量
+    mathVector3_t triad_ref_3_n = {0}; // n系，TRIAD方法构造的导航系（世界系）第三轴
+    mathVector3_t triad_measure_2_b = {0}; // b系，TRIAD方法构造的机体系第二轴，第一轴是测量到的加速度向量
+    mathVector3_t triad_measure_3_b = {0}; // b系，TRIAD方法构造的机体系第三轴
+    mathMatrix_t triad_ref_n;
+    mathMatrix_t triad_measure_b;
+    mathMatrix_t triad_measure_b_t;
+    mathMatrix_t rotate_matrix_b_to_n;
+    float triad_ref_n_data[9] = {0.0f};
+    float triad_measure_b_data[9] = {0.0f};
+    float triad_measure_b_t_data[9] = {0.0f};
+    float rotate_matrix_b_to_n_data[9] = {0.0f};
+
+    memcpy(accel_measure_b.v_,
+           app_ins_.observation_data_.accel_offline_corrected_ms2_,
+           sizeof(accel_measure_b.v_));
+    memcpy(mag_measure_b.v_,
+           app_ins_.observation_data_.mag_ut_,
+           sizeof(mag_measure_b.v_));
+
+    if (mathVec3NormalizeInPlace(&accel_measure_b) == false) {
+        return false;
+    }
+
+    if (mathVec3NormalizeInPlace(&mag_measure_b) == false) {
+        return false;
+    }
+
+    gravity_ref_unit_n.v_[0] = 0.0f;
+    gravity_ref_unit_n.v_[1] = 0.0f;
+    gravity_ref_unit_n.v_[2] = 1.0f;
+
+    geo_mag_ref_unit_n.v_[0] = cosf(APP_INS_ESKF_MAG_INCLINATION_RAD) * sinf(APP_INS_ESKF_MAG_DECLINATION_RAD);
+    geo_mag_ref_unit_n.v_[1] = cosf(APP_INS_ESKF_MAG_INCLINATION_RAD) * cosf(APP_INS_ESKF_MAG_DECLINATION_RAD);
+    geo_mag_ref_unit_n.v_[2] = -sinf(APP_INS_ESKF_MAG_INCLINATION_RAD);
+    if (mathVec3NormalizeInPlace(&geo_mag_ref_unit_n) == false) {
+        return false;
+    }
+
+    if (mathVec3Cross(&gravity_ref_unit_n, &geo_mag_ref_unit_n, &triad_ref_2_n) == false) {
+        return false;
+    }
+    if (mathVec3NormalizeInPlace(&triad_ref_2_n) == false) {
+        return false;
+    }
+    if (mathVec3Cross(&gravity_ref_unit_n, &triad_ref_2_n, &triad_ref_3_n) == false) {
+        return false;
+    }
+
+    if (mathVec3Cross(&accel_measure_b, &mag_measure_b, &triad_measure_2_b) == false) {
+        return false;
+    }
+    if (mathVec3NormalizeInPlace(&triad_measure_2_b) == false) {
+        return false;
+    }
+    if (mathVec3Cross(&accel_measure_b, &triad_measure_2_b, &triad_measure_3_b) == false) {
+        return false;
+    }
+
+    // TRIAD方法，C_b_to_n = T_n * T_b^T
+    triad_ref_n_data[0] = gravity_ref_unit_n.v_[0];
+    triad_ref_n_data[1] = triad_ref_2_n.v_[0];
+    triad_ref_n_data[2] = triad_ref_3_n.v_[0];
+    triad_ref_n_data[3] = gravity_ref_unit_n.v_[1];
+    triad_ref_n_data[4] = triad_ref_2_n.v_[1];
+    triad_ref_n_data[5] = triad_ref_3_n.v_[1];
+    triad_ref_n_data[6] = gravity_ref_unit_n.v_[2];
+    triad_ref_n_data[7] = triad_ref_2_n.v_[2];
+    triad_ref_n_data[8] = triad_ref_3_n.v_[2];
+
+    triad_measure_b_data[0] = accel_measure_b.v_[0];
+    triad_measure_b_data[1] = triad_measure_2_b.v_[0];
+    triad_measure_b_data[2] = triad_measure_3_b.v_[0];
+    triad_measure_b_data[3] = accel_measure_b.v_[1];
+    triad_measure_b_data[4] = triad_measure_2_b.v_[1];
+    triad_measure_b_data[5] = triad_measure_3_b.v_[1];
+    triad_measure_b_data[6] = accel_measure_b.v_[2];
+    triad_measure_b_data[7] = triad_measure_2_b.v_[2];
+    triad_measure_b_data[8] = triad_measure_3_b.v_[2];
+
+    mathMatrixInit(&triad_ref_n, 3U, 3U, triad_ref_n_data);
+    mathMatrixInit(&triad_measure_b, 3U, 3U, triad_measure_b_data);
+    mathMatrixInit(&triad_measure_b_t, 3U, 3U, triad_measure_b_t_data);
+    mathMatrixInit(&rotate_matrix_b_to_n, 3U, 3U, rotate_matrix_b_to_n_data);
+
+    if (mathMatrixTranspose(&triad_measure_b, &triad_measure_b_t) == false) {
+        return false;
+    }
+    if (mathMatrixMult(&triad_ref_n, &triad_measure_b_t, &rotate_matrix_b_to_n) != ARM_MATH_SUCCESS) {
+        return false;
+    }
+
+    return mathQuaternionBuildFromRotationMatrix(rotate_matrix_b_to_n_data, &app_ins_.init_quat_);
+}
+
 static bool appINSInitESKF(void)
 {
     algorithmESKFParams_t params;
@@ -239,10 +347,13 @@ static bool appINSInitESKF(void)
 
     memset(&params, 0, sizeof(params));
 
+    // 这个坐标系只是约定，本身并不会进行任何坐标系转换，也不定义导航系和机体系
     params.frame_ = ALGORITHM_ESKF_ENU_FLU;
-    if (mathQuaternionSetIdentity(&params.init_params_.quat_init_) == false) {
+    params.mag_measurement_mode_ = ALGORITHM_ESKF_MAG_MEASUREMENT_NORMALIZED_VECTOR;
+    if (appINSBuildInitQuaternion() == false) {
         return false;
     }
+    params.init_params_.quat_init_ = app_ins_.init_quat_;
 
     memcpy(params.init_params_.gyro_bias_init_,
            app_ins_.calibrate_data_.gyro_bias_rads_,
@@ -259,14 +370,17 @@ static bool appINSInitESKF(void)
         params.init_params_.delta_bias_accel_variance_[i] = accel_bias_variance;
     }
 
+    // 设置重力（比力）参考和地磁参考向量
+    // 请注意参考向量的定义决定了具体的 导航系（世界系），这里是ENU
     params.init_params_.gravity_ref_n_[0] = 0.0f;
     params.init_params_.gravity_ref_n_[1] = 0.0f;
     params.init_params_.gravity_ref_n_[2] = STANDARD_GRAVITY_M_S2;
-
-    // mag update 还没接入，先给一个合法占位参考方向
-    params.init_params_.geo_mag_ref_dir_n_[0] = 1.0f;
-    params.init_params_.geo_mag_ref_dir_n_[1] = 0.0f;
-    params.init_params_.geo_mag_ref_dir_n_[2] = 0.0f;
+    // 构造地磁参考向量
+    float geo_mag_ref_n[3];
+    geo_mag_ref_n[0] = APP_INS_ESKF_MAG_FIELD_STRENGTH_UT * cosf(APP_INS_ESKF_MAG_INCLINATION_RAD) * sinf(APP_INS_ESKF_MAG_DECLINATION_RAD);
+    geo_mag_ref_n[1] = APP_INS_ESKF_MAG_FIELD_STRENGTH_UT * cosf(APP_INS_ESKF_MAG_INCLINATION_RAD) * cosf(APP_INS_ESKF_MAG_DECLINATION_RAD);
+    geo_mag_ref_n[2] = -APP_INS_ESKF_MAG_FIELD_STRENGTH_UT * sinf(APP_INS_ESKF_MAG_INCLINATION_RAD);
+    memcpy(params.init_params_.geo_mag_ref_dir_n_, geo_mag_ref_n, sizeof(geo_mag_ref_n));
 
     params.gyro_noise_rads_sqrt_hz_ = APP_INS_ESKF_GYRO_NOISE_RADS_SQRT_HZ;
     params.gyro_random_walk_rads2_sqrt_hz_ = APP_INS_ESKF_GYRO_RANDOM_WALK_RADS2_SQRT_HZ;
@@ -335,9 +449,8 @@ static void appINSUpdateMAGRecordData(void)
     }
 }
 
-// 静止判据：
-// 1. gyro 足够小
-// 2. accel 模长接近 1g
+// 静止判据
+// gyro 足够小 且 accel 模长接近 1g
 static bool appINSIsIMUStationary(void)
 {
     float accel_norm = appINSGetVectorNorm3f(app_ins_.latest_imu_data_.accel_ms2_);
@@ -568,7 +681,7 @@ static bool appINSMAGDataReadyInterruptRegister(bspGPIOInstance_t *mag_int)
     return true;
 }
 
-// 对外粗粒度状态
+// 对外app状态
 appState_e appINSGetAPPState(void)
 {
     if (app_ins_.stage_ == APP_INS_DEGRADED) {
@@ -828,10 +941,6 @@ static bool appINSRunEKF(void)
 
     // 同一帧 IMU 数据只允许驱动一次 predict/update
     if (imu_timestamp_us == app_ins_.last_ekf_imu_timestamp_us_) {
-        if (app_ins_.observation_data_.mag_is_new_ == true) {
-            // mag update 暂未接入，先把事件位消费掉，避免旧事件一直保留
-            app_ins_.observation_data_.mag_is_new_ = false;
-        }
         return true;
     }
 
@@ -859,8 +968,13 @@ static bool appINSRunEKF(void)
         return false;
     }
 
-    // mag update 暂未接入，当前只消费事件位
     if (app_ins_.observation_data_.mag_is_new_ == true) {
+        // 简单实现，只在mag数据不太旧的时候update
+        if ((float)(app_ins_.observation_data_.mag_timestamp_us_ - app_ins_.observation_data_.imu_timestamp_us_) * 1.0e-6f < APP_INS_ESKF_MAG_MAX_DELAY_TIME_S) {
+            // algorithmESKFMagUpdate(&app_ins_.eskf_, app_ins_.observation_data_.mag_ut_, dt_s);
+        } else {
+            app_ins_.error_count_ ++;
+        }
         app_ins_.observation_data_.mag_is_new_ = false;
     }
 
@@ -900,8 +1014,9 @@ void appINSTaskEntry(void *argument)
     }
 
     for (;;) {
-        uint32_t start_cnt = bspDWTGetCount();
         uint32_t notify_count = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(APP_INS_MAX_UPDATE_WAIT_MS));
+
+        uint32_t start_cnt = bspDWTGetCount();
 
         if (notify_count > 0U) {
             // 收到 IMU 通知，更新一帧 IMU 数据

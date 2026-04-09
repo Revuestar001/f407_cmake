@@ -18,6 +18,8 @@
 #define ALGORITHM_ESKF_R_MAG_SCALE_FACTOR 50.0f // 磁力计测量噪声放大系数
 #define ALGORITHM_ESKF_ACCEL_NORM_GATE_RATIO 0.15f // accel模长门限，允许相对重力参考模长的偏差比例，*100%
 #define ALGORITHM_ESKF_ACCEL_CHI_SQUARE_THRESHOLD 11.345f // 3自由度卡方门限，约等于99%置信水平
+#define ALGORITHM_ESKF_MAG_NORM_GATE_RATIO 0.15f // mag模长门限，允许相对重力参考模长的偏差比例，*100%
+#define ALGORITHM_ESKF_MAG_CHI_SQUARE_THRESHOLD 11.345f // 3自由度卡方门限，约等于99%置信水平
 
 typedef enum
 {
@@ -39,6 +41,12 @@ typedef enum
     ALGORITHM_ESKF_ENU_FLU = 0,
 } algorithmESKFFrame_e;
 
+typedef enum
+{
+    ALGORITHM_ESKF_MAG_MEASUREMENT_RAW_VECTOR = 0,
+    ALGORITHM_ESKF_MAG_MEASUREMENT_NORMALIZED_VECTOR,
+} algorithmESKFMagMeasurementMode_e;
+
 typedef struct eskf_init_params
 {
     mathQuaternion_t quat_init_;
@@ -52,13 +60,15 @@ typedef struct eskf_init_params
 
     // 重力参考向量,比力，N系下
     float gravity_ref_n_[ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
-    // 地磁参考方向，N系下
+    // 地磁参考向量，N系下
+    // raw模式下使用带模长参考，normalized模式下会在init里归一化成方向向量
     float geo_mag_ref_dir_n_[ALGORITHM_ESKF_MEASURE_MAG_DIM];
 } algorithmESKFInitParams_t;
 
 typedef struct eskf_params
 {
     algorithmESKFFrame_e frame_;
+    algorithmESKFMagMeasurementMode_e mag_measurement_mode_;
 
     algorithmESKFInitParams_t init_params_;
 
@@ -119,6 +129,7 @@ typedef struct eskf
     mathMatrix_t gravity_ref_n_;
     // 地磁参考方向，N系下
     mathMatrix_t geo_mag_ref_dir_n_;
+    float geo_mag_ref_norm_;
 
     float dt_;
 
@@ -135,3 +146,5 @@ bool algorithmESKFGyroPredict(algorithmESKF_t *instance, float measurement[ALGOR
 // 使用accel测量值(只包含offline bias + scale)更新
 // dt当前保留接口，按当前同步IMU语义暂未使用
 bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_MEASURE_ACCEL_DIM], float dt);
+// 使用mag测量值(只包含hard-iron/soft-iron)更新
+bool algorithmESKFMagUpdate(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_MEASURE_MAG_DIM], float dt);
