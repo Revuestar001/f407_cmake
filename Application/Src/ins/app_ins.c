@@ -971,7 +971,7 @@ static bool appINSRunEKF(void)
     if (app_ins_.observation_data_.mag_is_new_ == true) {
         // 简单实现，只在mag数据不太旧的时候update
         if ((float)(app_ins_.observation_data_.mag_timestamp_us_ - app_ins_.observation_data_.imu_timestamp_us_) * 1.0e-6f < APP_INS_ESKF_MAG_MAX_DELAY_TIME_S) {
-            // algorithmESKFMagUpdate(&app_ins_.eskf_, app_ins_.observation_data_.mag_ut_, dt_s);
+            algorithmESKFMagUpdateYawOnly(&app_ins_.eskf_, app_ins_.observation_data_.mag_ut_, dt_s);
         } else {
             app_ins_.error_count_ ++;
         }

@@ -61,6 +61,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/algorithm/math/quaternion.c
     Module/Src/algorithm/math/vector3.c
     Module/Src/algorithm/math/matrix.c
+    Module/Src/algorithm/math/angle.c
     Module/Src/algorithm/eskf/error_state_kalman_filter.c
 
     Application/Src/remote_control/app_remote_control.c

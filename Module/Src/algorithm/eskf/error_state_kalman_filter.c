@@ -9,6 +9,7 @@
 #include "matrix.h"
 #include "quaternion.h"
 #include "vector3.h"
+#include "angle.h"
 
 static bool computeQDiscrete(algorithmESKF_t *instance, float dt)
 {
@@ -264,7 +265,7 @@ static bool updatePosteriorPAccel(algorithmESKF_t *instance)
     return true;
 }
 
-static bool updatePosteriorPGyro(algorithmESKF_t *instance)
+static bool updatePosteriorPMag(algorithmESKF_t *instance)
 {
     if (instance == NULL || instance->is_initialized_ == false) {
         return false;
@@ -316,6 +317,71 @@ static bool updatePosteriorPGyro(algorithmESKF_t *instance)
     mathMatrixMult(&K_R_mag, &K_mag_T, &K_R_K_mag_T);
     // P_posterior = (I - K * H) * P_priori * (I - K * H)^T + K * R * K^T
     mathMatrixAdd(&I_K_H_mag_P_priori_I_K_H_mag_T, &K_R_K_mag_T, &instance->P_);
+    mathMatrixSetSymmetricInPlace(&instance->P_);
+
+    return true;
+}
+
+static bool updatePosteriorPMagYawOnly(algorithmESKF_t *instance,
+                                       const mathMatrix_t *H_mag_yaw,
+                                       const mathMatrix_t *K_mag_yaw,
+                                       float R_mag_yaw)
+{
+    if (instance == NULL || instance->is_initialized_ == false || H_mag_yaw == NULL || K_mag_yaw == NULL) {
+        return false;
+    }
+
+    mathMatrix_t K_H_mag_yaw;
+    float K_H_mag_yaw_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    mathMatrixInit(&K_H_mag_yaw, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_H_mag_yaw_data);
+    mathMatrixMult(K_mag_yaw, H_mag_yaw, &K_H_mag_yaw);
+
+    mathMatrix_t identity;
+    float identity_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    mathMatrixInit(&identity, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, identity_data);
+    mathMatrixSetIdentity(&identity);
+
+    mathMatrix_t I_K_H_mag_yaw;
+    float I_K_H_mag_yaw_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    mathMatrixInit(&I_K_H_mag_yaw, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_yaw_data);
+    mathMatrixSub(&identity, &K_H_mag_yaw, &I_K_H_mag_yaw);
+
+    mathMatrix_t I_K_H_mag_yaw_T;
+    float I_K_H_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    mathMatrixInit(&I_K_H_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_yaw_T_data);
+    mathMatrixTranspose(&I_K_H_mag_yaw, &I_K_H_mag_yaw_T);
+
+    mathMatrix_t I_K_H_mag_yaw_P_priori;
+    float I_K_H_mag_yaw_P_priori_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    mathMatrixInit(&I_K_H_mag_yaw_P_priori, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_yaw_P_priori_data);
+    mathMatrixMult(&I_K_H_mag_yaw, &instance->P_, &I_K_H_mag_yaw_P_priori);
+
+    mathMatrix_t I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T;
+    float I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    mathMatrixInit(&I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T,
+                   ALGORITHM_ESKF_ERROR_STATE_DIM,
+                   ALGORITHM_ESKF_ERROR_STATE_DIM,
+                   I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T_data);
+    mathMatrixMult(&I_K_H_mag_yaw_P_priori, &I_K_H_mag_yaw_T, &I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T);
+
+    mathMatrix_t K_mag_yaw_T;
+    float K_mag_yaw_T_data[1U * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    mathMatrixInit(&K_mag_yaw_T, 1U, ALGORITHM_ESKF_ERROR_STATE_DIM, K_mag_yaw_T_data);
+    mathMatrixTranspose(K_mag_yaw, &K_mag_yaw_T);
+
+    mathMatrix_t K_R_mag_yaw;
+    float K_R_mag_yaw_data[ALGORITHM_ESKF_ERROR_STATE_DIM * 1U];
+    mathMatrixInit(&K_R_mag_yaw, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, K_R_mag_yaw_data);
+    if (mathMatrixScale(K_mag_yaw, R_mag_yaw, &K_R_mag_yaw) != ARM_MATH_SUCCESS) {
+        return false;
+    }
+
+    mathMatrix_t K_R_K_mag_yaw_T;
+    float K_R_K_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
+    mathMatrixInit(&K_R_K_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_R_K_mag_yaw_T_data);
+    mathMatrixMult(&K_R_mag_yaw, &K_mag_yaw_T, &K_R_K_mag_yaw_T);
+
+    mathMatrixAdd(&I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T, &K_R_K_mag_yaw_T, &instance->P_);
     mathMatrixSetSymmetricInPlace(&instance->P_);
 
     return true;
@@ -820,7 +886,7 @@ bool algorithmESKFMagUpdate(algorithmESKF_t *instance, float measurement[ALGORIT
     // 更新后验误差状态协方差矩阵P
     //
     // joseph形式，P_posterior = (I - K * H) * P_priori * (I - K * H)^T + K * R * K^T
-    if (updatePosteriorPGyro(instance) == false) {
+    if (updatePosteriorPMag(instance) == false) {
         return false;
     }
 
@@ -831,6 +897,231 @@ bool algorithmESKFMagUpdate(algorithmESKF_t *instance, float measurement[ALGORIT
         return false;
     }
     // 后验误差状态协方差矩阵P修正暂时不做
+
+    return true;
+}
+
+// 使用mag测量值(只包含hard-iron/soft-iron)更新,只用于yaw更新
+bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_MEASURE_MAG_DIM], float dt)
+{
+    if (instance == NULL || measurement == NULL || instance->is_initialized_ == false) {
+        return false;
+    }
+
+    (void)dt;
+
+    //
+    // 根据配置选择使用原始磁场向量或归一化方向向量
+    //
+    mathVector3_t mag_measurement_used;
+    memcpy(mag_measurement_used.v_, measurement, sizeof(mag_measurement_used.v_));
+    if (instance->params_.mag_measurement_mode_ == ALGORITHM_ESKF_MAG_MEASUREMENT_NORMALIZED_VECTOR) {
+        if (mathVec3NormalizeInPlace(&mag_measurement_used) == false) {
+            return false;
+        }
+    }
+    mathMatrix_t mag_measure_b;
+    float mag_measure_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
+    mathMatrixInit(&mag_measure_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, mag_measure_b_data);
+    memcpy(mag_measure_b_data, mag_measurement_used.v_, sizeof(mag_measure_b_data));
+
+    //
+    // 预测磁力计测量值
+    //
+    mathMatrix_t rotate_matrix_b_to_n;
+    float rotate_matrix_b_to_n_data[3U * 3U];
+    mathMatrixInit(&rotate_matrix_b_to_n, 3U, 3U, rotate_matrix_b_to_n_data);
+    if (mathQuaternionToRotationMatrix(&instance->nominal_state_quat_, rotate_matrix_b_to_n_data) == false) {
+        return false;
+    }
+    mathMatrix_t rotate_matrix_n_to_b;
+    float rotate_matrix_n_to_b_data[3U * 3U];
+    mathMatrixInit(&rotate_matrix_n_to_b, 3U, 3U, rotate_matrix_n_to_b_data);
+    if (mathMatrixTranspose(&rotate_matrix_b_to_n, &rotate_matrix_n_to_b) == false) {
+        return false;
+    }
+
+    // 当前先验姿态下机体坐标系中的U轴方向
+    mathMatrix_t U_axis_n;
+    float U_axis_n_data[3U * 1U] = {0.0f, 0.0f, 1.0f};
+    mathMatrixInit(&U_axis_n, 3U, 1U, U_axis_n_data);
+    mathMatrix_t U_axis_b;
+    float U_axis_b_data[3U * 1U] = {0.0f};
+    mathMatrixInit(&U_axis_b, 3U, 1U, U_axis_b_data);
+    mathMatrixMult(&rotate_matrix_n_to_b, &U_axis_n, &U_axis_b);
+    if (mathVec3NormalizeInPlaceRaw(U_axis_b_data) == false) {
+        return false;
+    }
+
+    // FL面投影矩阵 P_fl = I - u_b * u_b^T
+    mathMatrix_t P_FL_b;
+    float P_FL_b_data[3U * 3U];
+    mathMatrixInit(&P_FL_b, 3U, 3U, P_FL_b_data);
+    mathMatrix_t identity;
+    float identity_data[3U * 3U];
+    mathMatrixInit(&identity, 3U, 3U, identity_data);
+    if (mathMatrixSetIdentity(&identity) == false) {
+        return false;
+    }
+    mathMatrix_t U_axis_T_b;
+    float U_axis_T_b_data[1U * 3U];
+    mathMatrixInit(&U_axis_T_b, 1U, 3U, U_axis_T_b_data);
+    if (mathMatrixTranspose(&U_axis_b, &U_axis_T_b) == false) {
+        return false;
+    }
+    mathMatrix_t U_axis_U_axis_T_b;
+    float U_axis_U_axis_T_b_data[3U * 3U];
+    mathMatrixInit(&U_axis_U_axis_T_b, 3U, 3U, U_axis_U_axis_T_b_data);
+    mathMatrixMult(&U_axis_b, &U_axis_T_b, &U_axis_U_axis_T_b);
+    mathMatrixSub(&identity, &U_axis_U_axis_T_b, &P_FL_b);
+
+    // 参考磁向量投影到FL面
+    mathMatrix_t geo_mag_ref_dir_vec_b;
+    float geo_mag_ref_dir_vec_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
+    mathMatrixInit(&geo_mag_ref_dir_vec_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, geo_mag_ref_dir_vec_b_data);
+    mathMatrixMult(&rotate_matrix_n_to_b, &instance->geo_mag_ref_dir_n_, &geo_mag_ref_dir_vec_b);
+    mathMatrix_t geo_mag_ref_dir_FL_vec_b;
+    float geo_mag_ref_dir_FL_vec_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
+    mathMatrixInit(&geo_mag_ref_dir_FL_vec_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, geo_mag_ref_dir_FL_vec_b_data);
+    mathMatrixMult(&P_FL_b, &geo_mag_ref_dir_vec_b, &geo_mag_ref_dir_FL_vec_b);
+
+    float geo_mag_ref_dir_vec_b_norm = 0.0f;
+    float geo_mag_ref_dir_FL_vec_b_norm = 0.0f;
+    if (mathVec3NormRaw(geo_mag_ref_dir_vec_b_data, &geo_mag_ref_dir_vec_b_norm) == false ||
+        mathVec3NormRaw(geo_mag_ref_dir_FL_vec_b_data, &geo_mag_ref_dir_FL_vec_b_norm) == false) {
+        return false;
+    }
+    if (geo_mag_ref_dir_FL_vec_b_norm < ALGORITHM_ESKF_MAG_YAW_ONLY_REF_NORM_GATE_RATIO * geo_mag_ref_dir_vec_b_norm) {
+        return true;
+    }
+    if (mathVec3NormalizeInPlaceRaw(geo_mag_ref_dir_FL_vec_b_data) == false) {
+        return false;
+    }
+
+    // 测量磁向量投影到FL面
+    mathMatrix_t mag_measure_FL_b;
+    float mag_measure_FL_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
+    mathMatrixInit(&mag_measure_FL_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, mag_measure_FL_b_data);
+    mathMatrixMult(&P_FL_b, &mag_measure_b, &mag_measure_FL_b);
+
+    float mag_measure_b_norm = 0.0f;
+    float mag_measure_FL_b_norm = 0.0f;
+    if (mathVec3NormRaw(mag_measure_b_data, &mag_measure_b_norm) == false ||
+        mathVec3NormRaw(mag_measure_FL_b_data, &mag_measure_FL_b_norm) == false) {
+        return false;
+    }
+    if (mag_measure_FL_b_norm < ALGORITHM_ESKF_MAG_YAW_ONLY_MEASURE_NORM_GATE_RATIO * mag_measure_b_norm) {
+        return true;
+    }
+    if (mathVec3NormalizeInPlaceRaw(mag_measure_FL_b_data) == false) {
+        return false;
+    }
+
+    // s = u_b x h_h^b，表示从预测水平磁向量逆时针转正的切向单位向量
+    mathVector3_t geo_mag_ref_dir_FL_vec_b_vec3 = {0};
+    mathVector3_t mag_measure_FL_b_vec3 = {0};
+    mathVector3_t U_axis_b_vec3 = {0};
+    mathVector3_t s_FL_b_vec3 = {0};
+    memcpy(geo_mag_ref_dir_FL_vec_b_vec3.v_, geo_mag_ref_dir_FL_vec_b_data, sizeof(geo_mag_ref_dir_FL_vec_b_vec3.v_));
+    memcpy(mag_measure_FL_b_vec3.v_, mag_measure_FL_b_data, sizeof(mag_measure_FL_b_vec3.v_));
+    memcpy(U_axis_b_vec3.v_, U_axis_b_data, sizeof(U_axis_b_vec3.v_));
+    if (mathVec3Cross(&U_axis_b_vec3, &geo_mag_ref_dir_FL_vec_b_vec3, &s_FL_b_vec3) == false) {
+        return false;
+    }
+    if (mathVec3NormalizeInPlace(&s_FL_b_vec3) == false) {
+        return false;
+    }
+
+    //
+    // 精确非线性标量残差
+    //
+    float s_dot_m = 0.0f;
+    float h_dot_m = 0.0f;
+    if (mathVec3Dot(&s_FL_b_vec3, &mag_measure_FL_b_vec3, &s_dot_m) == false ||
+        mathVec3Dot(&geo_mag_ref_dir_FL_vec_b_vec3, &mag_measure_FL_b_vec3, &h_dot_m) == false) {
+        return false;
+    }
+    float psi_residual = mathAngleWrapPi(atan2f(s_dot_m, h_dot_m));
+
+    //
+    // 一阶雅可比 H_psi = s_h^T * [h_h^b]_x
+    //
+    float geo_mag_ref_dir_FL_vec_b_skew_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
+    if (mathVec3BuildSkewSymmetricMatrix(&geo_mag_ref_dir_FL_vec_b_vec3, geo_mag_ref_dir_FL_vec_b_skew_data) == false) {
+        return false;
+    }
+    mathMatrix_t H_mag_yaw;
+    float H_mag_yaw_data[1U * ALGORITHM_ESKF_ERROR_STATE_DIM] = {0.0f};
+    mathMatrixInit(&H_mag_yaw, 1U, ALGORITHM_ESKF_ERROR_STATE_DIM, H_mag_yaw_data);
+    for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM; c++) {
+        H_mag_yaw_data[c] = s_FL_b_vec3.v_[0] * geo_mag_ref_dir_FL_vec_b_skew_data[c] +
+                            s_FL_b_vec3.v_[1] * geo_mag_ref_dir_FL_vec_b_skew_data[3U + c] +
+                            s_FL_b_vec3.v_[2] * geo_mag_ref_dir_FL_vec_b_skew_data[6U + c];
+    }
+
+    //
+    // 标量创新协方差 S = H P H^T + R
+    //
+    mathMatrix_t H_mag_yaw_T;
+    float H_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * 1U];
+    mathMatrixInit(&H_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, H_mag_yaw_T_data);
+    if (mathMatrixTranspose(&H_mag_yaw, &H_mag_yaw_T) == false) {
+        return false;
+    }
+
+    mathMatrix_t P_priori_H_mag_yaw_T;
+    float P_priori_H_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * 1U];
+    mathMatrixInit(&P_priori_H_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, P_priori_H_mag_yaw_T_data);
+    mathMatrixMult(&instance->P_, &H_mag_yaw_T, &P_priori_H_mag_yaw_T);
+
+    float R_mag_yaw = instance->R_mag_data_[0];
+    float horizontal_norm_for_noise = geo_mag_ref_dir_FL_vec_b_norm;
+    if (horizontal_norm_for_noise <= 1.0e-6f) {
+        return true;
+    }
+    R_mag_yaw /= (horizontal_norm_for_noise * horizontal_norm_for_noise);
+
+    float S_mag_yaw = R_mag_yaw;
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
+        S_mag_yaw += H_mag_yaw_data[i] * P_priori_H_mag_yaw_T_data[i];
+    }
+    if (S_mag_yaw <= 1.0e-6f) {
+        return false;
+    }
+
+    float mag_yaw_innovation_chi_square = (psi_residual * psi_residual) / S_mag_yaw;
+    if (mag_yaw_innovation_chi_square > ALGORITHM_ESKF_MAG_YAW_ONLY_CHI_SQUARE_THRESHOLD) {
+        return true;
+    }
+
+    //
+    // 标量卡尔曼增益
+    //
+    mathMatrix_t K_mag_yaw;
+    float K_mag_yaw_data[ALGORITHM_ESKF_ERROR_STATE_DIM * 1U];
+    mathMatrixInit(&K_mag_yaw, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, K_mag_yaw_data);
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
+        K_mag_yaw_data[i] = P_priori_H_mag_yaw_T_data[i] / S_mag_yaw;
+    }
+
+    //
+    // 后验误差状态
+    //
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
+        instance->error_states_data_[i] = K_mag_yaw_data[i] * psi_residual;
+    }
+
+    if (injectErrorToNominal(instance) == false) {
+        return false;
+    }
+
+    if (updatePosteriorPMagYawOnly(instance, &H_mag_yaw, &K_mag_yaw, R_mag_yaw) == false) {
+        return false;
+    }
+
+    if (clearErrorStates(instance) == false) {
+        return false;
+    }
 
     return true;
 }

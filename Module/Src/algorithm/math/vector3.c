@@ -37,6 +37,18 @@ bool mathVec3Norm(const mathVector3_t *vec3, float *out)
     return true;
 }
 
+bool mathVec3NormRaw(const float *vec3, float *out)
+{
+    if (vec3 == NULL || out == NULL) {
+        return false;
+    }
+
+    mathVector3_t vec3_temp;
+    memcpy(vec3_temp.v_, vec3, sizeof(vec3_temp.v_));
+
+    return mathVec3Norm(&vec3_temp, out);
+}
+
 bool mathVec3Normalize(const mathVector3_t *vec3, mathVector3_t *vec3_out)
 {
     if (vec3 == NULL || vec3_out == NULL) {
@@ -76,6 +88,23 @@ bool mathVec3NormalizeInPlace(mathVector3_t *vec3)
     }
     
     *vec3 = vec3_temp;
+    return true;
+}
+
+bool mathVec3NormalizeInPlaceRaw(float *vec3)
+{
+    if (vec3 == NULL) {
+        return false;
+    }
+
+    mathVector3_t vec3_temp;
+
+    memcpy(vec3_temp.v_, vec3, sizeof(vec3_temp.v_));
+    if (mathVec3NormalizeInPlace(&vec3_temp) == false) {
+        return false;
+    }
+
+    memcpy(vec3, vec3_temp.v_, sizeof(vec3_temp.v_));
     return true;
 }
 

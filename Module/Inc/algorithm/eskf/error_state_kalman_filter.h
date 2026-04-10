@@ -12,14 +12,25 @@
 #define ALGORITHM_ESKF_MAX_DT_S 0.01f
 #define ALGORITHM_ESKF_MIN_DT_S 0.0002f
 
-#define ALGORITHM_ESKF_IMU_SAMPLE_FREQUENCY 1000.0f // imu近似采样频率，只能用于初始化！
+#define ALGORITHM_ESKF_IMU_SAMPLE_FREQUENCY 400.0f // imu近似采样频率，只能用于初始化！
 #define ALGORITHM_ESKF_R_ACCEL_SCALE_FACTOR 10.0f // 加速度测量噪声放大系数
 #define ALGORITHM_ESKF_MAG_SAMPLE_FREQUENCY 200.0f // mag近似采样频率，只能用于初始化！
 #define ALGORITHM_ESKF_R_MAG_SCALE_FACTOR 50.0f // 磁力计测量噪声放大系数
 #define ALGORITHM_ESKF_ACCEL_NORM_GATE_RATIO 0.15f // accel模长门限，允许相对重力参考模长的偏差比例，*100%
-#define ALGORITHM_ESKF_ACCEL_CHI_SQUARE_THRESHOLD 11.345f // 3自由度卡方门限，约等于99%置信水平
+#define ALGORITHM_ESKF_CHI_SQUARE_1_DOF_90_PERCENT 2.706f
+#define ALGORITHM_ESKF_CHI_SQUARE_1_DOF_95_PERCENT 3.841f
+#define ALGORITHM_ESKF_CHI_SQUARE_1_DOF_99_PERCENT 6.635f
+#define ALGORITHM_ESKF_CHI_SQUARE_1_DOF_995_PERCENT 7.879f
+#define ALGORITHM_ESKF_CHI_SQUARE_3_DOF_90_PERCENT 6.251f
+#define ALGORITHM_ESKF_CHI_SQUARE_3_DOF_95_PERCENT 7.815f
+#define ALGORITHM_ESKF_CHI_SQUARE_3_DOF_99_PERCENT 11.345f
+#define ALGORITHM_ESKF_CHI_SQUARE_3_DOF_995_PERCENT 12.838f
+#define ALGORITHM_ESKF_ACCEL_CHI_SQUARE_THRESHOLD ALGORITHM_ESKF_CHI_SQUARE_3_DOF_99_PERCENT
 #define ALGORITHM_ESKF_MAG_NORM_GATE_RATIO 0.15f // mag模长门限，允许相对重力参考模长的偏差比例，*100%
-#define ALGORITHM_ESKF_MAG_CHI_SQUARE_THRESHOLD 11.345f // 3自由度卡方门限，约等于99%置信水平
+#define ALGORITHM_ESKF_MAG_CHI_SQUARE_THRESHOLD ALGORITHM_ESKF_CHI_SQUARE_3_DOF_99_PERCENT
+#define ALGORITHM_ESKF_MAG_YAW_ONLY_CHI_SQUARE_THRESHOLD ALGORITHM_ESKF_CHI_SQUARE_1_DOF_99_PERCENT
+#define ALGORITHM_ESKF_MAG_YAW_ONLY_REF_NORM_GATE_RATIO 0.15f // mag yaw-only下参考磁场向量模长门限
+#define ALGORITHM_ESKF_MAG_YAW_ONLY_MEASURE_NORM_GATE_RATIO 0.15f // mag yaw-only下测量磁场向量模长门限
 
 typedef enum
 {
@@ -148,3 +159,5 @@ bool algorithmESKFGyroPredict(algorithmESKF_t *instance, float measurement[ALGOR
 bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_MEASURE_ACCEL_DIM], float dt);
 // 使用mag测量值(只包含hard-iron/soft-iron)更新
 bool algorithmESKFMagUpdate(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_MEASURE_MAG_DIM], float dt);
+// 使用mag测量值进行yaw-only更新
+bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[ALGORITHM_ESKF_MEASURE_MAG_DIM], float dt);
