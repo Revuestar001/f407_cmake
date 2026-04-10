@@ -1018,6 +1018,7 @@ bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[
     }
 
     // s = u_b x h_h^b，表示从预测水平磁向量逆时针转正的切向单位向量
+    // 请注意，这里叉乘方向需要检查
     mathVector3_t geo_mag_ref_dir_FL_vec_b_vec3 = {0};
     mathVector3_t mag_measure_FL_b_vec3 = {0};
     mathVector3_t U_axis_b_vec3 = {0};
@@ -1074,7 +1075,10 @@ bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[
     mathMatrixInit(&P_priori_H_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, P_priori_H_mag_yaw_T_data);
     mathMatrixMult(&instance->P_, &H_mag_yaw_T, &P_priori_H_mag_yaw_T);
 
+    // 测量噪声协方差矩阵R
+    // 请注意，这里的写法只适用于磁噪声各向同性(mag_noise_x = mag_noise_y = mag_noise_z)的情况，更严谨的是R_mag_yaw = (s_h * R_mag * s_n^T) / rou^2
     float R_mag_yaw = instance->R_mag_data_[0];
+    // 请注意，这里horizontal_norm_for_noise 用 测量值FL面模长 更严谨
     float horizontal_norm_for_noise = geo_mag_ref_dir_FL_vec_b_norm;
     if (horizontal_norm_for_noise <= 1.0e-6f) {
         return true;
