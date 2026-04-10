@@ -624,6 +624,8 @@ static void appINSIMUDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *
     (void)gpio_instance;
     appINSInstance_t *instance = (appINSInstance_t *)owner;
 
+    instance->observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
+
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     vTaskNotifyGiveFromISR(instance->task_handle_, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
@@ -634,6 +636,8 @@ static void appINSMAGDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *
 {
     (void)gpio_instance;
     appINSInstance_t *instance = (appINSInstance_t *)owner;
+
+    instance->observation_data_.mag_timestamp_us_ = bspDWTGetAbsTimeUs();
 
     instance->mag_new_data_ready_ = true;
 }
@@ -699,7 +703,7 @@ appState_e appINSGetAPPState(void)
     }
 }
 
-// app_ins 轻初始化：
+// app_ins初始化
 // 只完成 device bring-up、回调注册和上下文初始化
 static bool appINSInit(void)
 {
@@ -824,7 +828,8 @@ static bool appINSUpdateIMUSample(void)
     // appINSApplyGyroBias(app_ins_.latest_imu_data_.gyro_rads_, app_ins_.calibrate_data_.gyro_bias_rads_, app_ins_.observation_data_.gyro_corrected_rads_);
     memcpy(app_ins_.observation_data_.gyro_no_correct_rads_, app_ins_.latest_imu_data_.gyro_rads_, sizeof(app_ins_.observation_data_.gyro_no_correct_rads_));
     appINSApplyAccelBiasScale(app_ins_.latest_imu_data_.accel_ms2_, app_ins_.calibrate_data_.accel_bias_ms2_, app_ins_.calibrate_data_.accel_scale_, app_ins_.observation_data_.accel_offline_corrected_ms2_);
-    app_ins_.observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
+    // 不在这里记录时间戳，应该在drdy中断中记录
+    // app_ins_.observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
 
     return true;
 }
@@ -852,7 +857,8 @@ static bool appINSUpdateMAGSample(void)
     app_ins_.observation_data_.mag_ut_[0] = app_ins_.latest_mag_data_.mag_ut_[0];
     app_ins_.observation_data_.mag_ut_[1] = app_ins_.latest_mag_data_.mag_ut_[1];
     app_ins_.observation_data_.mag_ut_[2] = app_ins_.latest_mag_data_.mag_ut_[2];
-    app_ins_.observation_data_.mag_timestamp_us_ = bspDWTGetAbsTimeUs();
+    // 不在这里记录时间戳，应该在drdy中断中记录
+    // app_ins_.observation_data_.mag_timestamp_us_ = bspDWTGetAbsTimeUs();
     app_ins_.observation_data_.mag_is_new_ = true;
     appINSUpdateMAGRecordData();
 
@@ -957,8 +963,14 @@ static bool appINSRunEKF(void)
 
     if (app_ins_.observation_data_.mag_is_new_ == true) {
         // 简单实现，只在mag数据不太旧的时候update
-        if ((float)(app_ins_.observation_data_.mag_timestamp_us_ - app_ins_.observation_data_.imu_timestamp_us_) * 1.0e-6f < APP_INS_ESKF_MAG_MAX_DELAY_TIME_S) {
-            algorithmESKFMagUpdateYawOnly(&app_ins_.eskf_, app_ins_.observation_data_.mag_ut_, dt_s);
+        uint64_t mag_imu_delta_timestamp_us = (app_ins_.observation_data_.mag_timestamp_us_ < app_ins_.observation_data_.imu_timestamp_us_) ? 
+                                                (app_ins_.observation_data_.imu_timestamp_us_ - app_ins_.observation_data_.mag_timestamp_us_) : 
+                                                (app_ins_.observation_data_.mag_timestamp_us_ - app_ins_.observation_data_.imu_timestamp_us_);
+        if ((float)mag_imu_delta_timestamp_us * 1e-6f < APP_INS_ESKF_MAG_MAX_DELAY_TIME_S) {
+            if (algorithmESKFMagUpdateYawOnly(&app_ins_.eskf_, app_ins_.observation_data_.mag_ut_, dt_s) == false) {
+                app_ins_.observation_data_.mag_is_new_ = false;
+                return false;
+            }
         } else {
             app_ins_.error_count_ ++;
         }
@@ -1002,8 +1014,6 @@ void appINSTaskEntry(void *argument)
 
     for (;;) {
         uint32_t notify_count = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(APP_INS_MAX_UPDATE_WAIT_MS));
-
-        
 
         if (notify_count > 0U) {
             // 收到 IMU 通知，更新一帧 IMU 数据
