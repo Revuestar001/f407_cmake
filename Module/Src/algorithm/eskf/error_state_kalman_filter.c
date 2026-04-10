@@ -181,6 +181,241 @@ static bool computeMagInnovationChiSquare(const float mag_residual[ALGORITHM_ESK
     return true;
 }
 
+// 固定维度矩阵 helper：直接针对 9x9 / 9x3 / 3x9 做实现，减少通用矩阵接口调度开销。
+// 原地对称化
+static void eskfMat9x9SymmetrizeInPlace(float *mat_9x9)
+{
+    if (mat_9x9 == NULL) {
+        return;
+    }
+
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        for (size_t c = r + 1U; c < ALGORITHM_ESKF_ERROR_STATE_DIM; c++) {
+            float sym_val = 0.5f * (mat_9x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM + c] +
+                                    mat_9x9[c * ALGORITHM_ESKF_ERROR_STATE_DIM + r]);
+            mat_9x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM + c] = sym_val;
+            mat_9x9[c * ALGORITHM_ESKF_ERROR_STATE_DIM + r] = sym_val;
+        }
+    }
+}
+
+static void eskfMat9x9Mul(const float *lhs_9x9, const float *rhs_9x9, float *out_9x9)
+{
+    memset(out_9x9, 0, sizeof(float) * ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM);
+
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        float *out_row = &out_9x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM];
+        const float *lhs_row = &lhs_9x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+        for (size_t k = 0; k < ALGORITHM_ESKF_ERROR_STATE_DIM; k++) {
+            float lhs_val = lhs_row[k];
+            const float *rhs_row = &rhs_9x9[k * ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+            for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_DIM; c++) {
+                out_row[c] += lhs_val * rhs_row[c];
+            }
+        }
+    }
+}
+
+// A * B^T
+static void eskfMat9x9MulTransB(const float *lhs_9x9, const float *rhs_9x9, float *out_9x9)
+{
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        const float *lhs_row = &lhs_9x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+        for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_DIM; c++) {
+            const float *rhs_row = &rhs_9x9[c * ALGORITHM_ESKF_ERROR_STATE_DIM];
+            float sum = 0.0f;
+
+            for (size_t k = 0; k < ALGORITHM_ESKF_ERROR_STATE_DIM; k++) {
+                sum += lhs_row[k] * rhs_row[k];
+            }
+
+            out_9x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM + c] = sum;
+        }
+    }
+}
+
+// A * B^T
+static void eskfMat9x9Mul9x3TransB(const float *lhs_9x9, const float *rhs_3x9, float *out_9x3)
+{
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        const float *lhs_row = &lhs_9x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+        for (size_t c = 0; c < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; c++) {
+            const float *rhs_row = &rhs_3x9[c * ALGORITHM_ESKF_ERROR_STATE_DIM];
+            float sum = 0.0f;
+
+            for (size_t k = 0; k < ALGORITHM_ESKF_ERROR_STATE_DIM; k++) {
+                sum += lhs_row[k] * rhs_row[k];
+            }
+
+            out_9x3[r * ALGORITHM_ESKF_MEASURE_ACCEL_DIM + c] = sum;
+        }
+    }
+}
+
+static void eskfMat3x9Mul9x9(const float *lhs_3x9, const float *rhs_9x9, float *out_3x9)
+{
+    memset(out_3x9, 0, sizeof(float) * ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM);
+
+    for (size_t r = 0; r < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; r++) {
+        float *out_row = &out_3x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM];
+        const float *lhs_row = &lhs_3x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+        for (size_t k = 0; k < ALGORITHM_ESKF_ERROR_STATE_DIM; k++) {
+            float lhs_val = lhs_row[k];
+            const float *rhs_row = &rhs_9x9[k * ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+            for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_DIM; c++) {
+                out_row[c] += lhs_val * rhs_row[c];
+            }
+        }
+    }
+}
+
+static void eskfMat3x9Mul9x3(const float *lhs_3x9, const float *rhs_9x3, float *out_3x3)
+{
+    memset(out_3x3, 0, sizeof(float) * ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM);
+
+    for (size_t r = 0; r < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; r++) {
+        float *out_row = &out_3x3[r * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+        const float *lhs_row = &lhs_3x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+        for (size_t k = 0; k < ALGORITHM_ESKF_ERROR_STATE_DIM; k++) {
+            float lhs_val = lhs_row[k];
+
+            for (size_t c = 0; c < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; c++) {
+                out_row[c] += lhs_val * rhs_9x3[k * ALGORITHM_ESKF_MEASURE_ACCEL_DIM + c];
+            }
+        }
+    }
+}
+
+static void eskfMat9x3Mul3x3(const float *lhs_9x3, const float *rhs_3x3, float *out_9x3)
+{
+    memset(out_9x3, 0, sizeof(float) * ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM);
+
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        float *out_row = &out_9x3[r * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+        const float *lhs_row = &lhs_9x3[r * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+
+        for (size_t k = 0; k < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; k++) {
+            float lhs_val = lhs_row[k];
+            const float *rhs_row = &rhs_3x3[k * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+
+            for (size_t c = 0; c < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; c++) {
+                out_row[c] += lhs_val * rhs_row[c];
+            }
+        }
+    }
+}
+
+static void eskfMat9x3Mul3x1(const float *lhs_9x3, const float *rhs_3x1, float *out_9x1)
+{
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        const float *lhs_row = &lhs_9x3[r * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+        float sum = 0.0f;
+
+        for (size_t k = 0; k < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; k++) {
+            sum += lhs_row[k] * rhs_3x1[k];
+        }
+
+        out_9x1[r] = sum;
+    }
+}
+
+static void eskfMat9x3Mul3x9(const float *lhs_9x3, const float *rhs_3x9, float *out_9x9)
+{
+    memset(out_9x9, 0, sizeof(float) * ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM);
+
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        float *out_row = &out_9x9[r * ALGORITHM_ESKF_ERROR_STATE_DIM];
+        const float *lhs_row = &lhs_9x3[r * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
+
+        for (size_t k = 0; k < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; k++) {
+            float lhs_val = lhs_row[k];
+            const float *rhs_row = &rhs_3x9[k * ALGORITHM_ESKF_ERROR_STATE_DIM];
+
+            for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_DIM; c++) {
+                out_row[c] += lhs_val * rhs_row[c];
+            }
+        }
+    }
+}
+
+// 直接构造PHI = I + F * dt，避免构造中间矩阵
+static void eskfBuildPhiFirstOrder(const float *F_9x9, float dt, float *PHI_9x9)
+{
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
+        PHI_9x9[i] = F_9x9[i] * dt;
+    }
+
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
+        PHI_9x9[i * ALGORITHM_ESKF_ERROR_STATE_DIM + i] += 1.0f;
+    }
+}
+
+static bool updatePosteriorP3DJosephOptimized(algorithmESKF_t *instance,
+                                              const float *K_9x3,
+                                              const float *H_3x9,
+                                              const float *S_3x3)
+{
+    if (instance == NULL || K_9x3 == NULL || H_3x9 == NULL || S_3x3 == NULL) {
+        return false;
+    }
+
+    // 优化原理：Joseph 形式按低秩展开，避免显式构造 (I-KH) 并做多次完整 9x9 乘法。
+    // 等价形式：P_posterior = P_priori - (P_priori h^T) (P_priori h^T)^T / S
+    eskfMat3x9Mul9x9(H_3x9, instance->P_data_, instance->temp_mat_3x9_0_data_);
+    eskfMat9x3Mul3x9(K_9x3, instance->temp_mat_3x9_0_data_, instance->temp_mat_9x9_0_data_);
+    eskfMat9x3Mul3x3(K_9x3, S_3x3, instance->temp_mat_9x3_0_data_);
+
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_DIM; c++) {
+            float ksk_t = 0.0f;
+            for (size_t k = 0; k < ALGORITHM_ESKF_MEASURE_ACCEL_DIM; k++) {
+                ksk_t += instance->temp_mat_9x3_0_data_[r * ALGORITHM_ESKF_MEASURE_ACCEL_DIM + k] *
+                         K_9x3[c * ALGORITHM_ESKF_MEASURE_ACCEL_DIM + k];
+            }
+
+            instance->P_data_[r * ALGORITHM_ESKF_ERROR_STATE_DIM + c] =
+                instance->P_data_[r * ALGORITHM_ESKF_ERROR_STATE_DIM + c] -
+                instance->temp_mat_9x9_0_data_[r * ALGORITHM_ESKF_ERROR_STATE_DIM + c] -
+                instance->temp_mat_9x9_0_data_[c * ALGORITHM_ESKF_ERROR_STATE_DIM + r] +
+                ksk_t;
+        }
+    }
+
+    // P_posterior是对称矩阵
+    eskfMat9x9SymmetrizeInPlace(instance->P_data_);
+    return true;
+}
+
+static bool updatePosteriorPScalarJosephOptimized(algorithmESKF_t *instance,
+                                                  const float *P_H_T_9x1,
+                                                  float S_scalar)
+{
+    if (instance == NULL || P_H_T_9x1 == NULL || S_scalar <= 1.0e-6f) {
+        return false;
+    }
+
+    // 优化原理：标量观测下 Joseph 形式可化为秩1更新，避免完整 9x9 构造和乘法。
+    // 等价形式：P_posterior = P_priori - (P_priori h^T) (P_priori h^T)^T / S
+    float inv_S = 1.0f / S_scalar;
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_DIM; c++) {
+            instance->P_data_[r * ALGORITHM_ESKF_ERROR_STATE_DIM + c] -=
+                P_H_T_9x1[r] * P_H_T_9x1[c] * inv_S;
+        }
+    }
+
+    // P_posterior是对称矩阵
+    eskfMat9x9SymmetrizeInPlace(instance->P_data_);
+    return true;
+}
+
 static bool injectErrorToNominal(algorithmESKF_t *instance)
 {
     if (instance == NULL || instance->is_initialized_ == false) {
@@ -214,55 +449,11 @@ static bool updatePosteriorPAccel(algorithmESKF_t *instance)
         return false;
     }
 
-    // K * H
-    mathMatrix_t K_H_accel;
-    float K_H_accel_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_H_accel, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_H_accel_data);
-    mathMatrixMult(&instance->K_accel_, &instance->H_accel_, &K_H_accel);
-    // (I - K * H)
-    mathMatrix_t identity;
-    float identity_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&identity, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, identity_data);
-    mathMatrixSetIdentity(&identity);
-    mathMatrix_t I_K_H_accel;
-    float I_K_H_accel_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_accel, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_accel_data);
-    mathMatrixSub(&identity, &K_H_accel, &I_K_H_accel);
-    // (I - K * H)^T
-    mathMatrix_t I_K_H_accel_T;
-    float I_K_H_accel_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_accel_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_accel_T_data);
-    mathMatrixTranspose(&I_K_H_accel, &I_K_H_accel_T);
-    // (I - K * H) * P_priori
-    mathMatrix_t I_K_H_accel_P_priori;
-    float I_K_H_accel_P_priori_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_accel_P_priori, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_accel_P_priori_data);
-    mathMatrixMult(&I_K_H_accel, &instance->P_, &I_K_H_accel_P_priori);
-    // (I - K * H) * P_priori * (I - K * H)^T
-    mathMatrix_t I_K_H_accel_P_priori_I_K_H_accel_T;
-    float I_K_H_accel_P_priori_I_K_H_accel_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_accel_P_priori_I_K_H_accel_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_accel_P_priori_I_K_H_accel_T_data);
-    mathMatrixMult(&I_K_H_accel_P_priori, &I_K_H_accel_T, &I_K_H_accel_P_priori_I_K_H_accel_T);
-    // K^T
-    mathMatrix_t K_accel_T;
-    float K_accel_T_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_accel_T, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_accel_T_data);
-    mathMatrixTranspose(&instance->K_accel_, &K_accel_T);
-    // K * R
-    mathMatrix_t K_R_accel;
-    float K_R_accel_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
-    mathMatrixInit(&K_R_accel, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, K_R_accel_data);
-    mathMatrixMult(&instance->K_accel_, &instance->R_accel_, &K_R_accel);
-    // K * R * K^T
-    mathMatrix_t K_R_K_accel_T;
-    float K_R_K_accel_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_R_K_accel_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_R_K_accel_T_data);
-    mathMatrixMult(&K_R_accel, &K_accel_T, &K_R_K_accel_T);
-    // P_posterior = (I - K * H) * P_priori * (I - K * H)^T + K * R * K^T
-    mathMatrixAdd(&I_K_H_accel_P_priori_I_K_H_accel_T, &K_R_K_accel_T, &instance->P_);
-    mathMatrixSetSymmetricInPlace(&instance->P_);
-
-    return true;
+    // 优化原理：accel 是 3 维观测，这里直接走 9x3/3x9 的低秩 Joseph 展开。
+    return updatePosteriorP3DJosephOptimized(instance,
+                                             instance->K_accel_data_,
+                                             instance->H_accel_data_,
+                                             instance->S_accel_data_);
 }
 
 static bool updatePosteriorPMag(algorithmESKF_t *instance)
@@ -271,120 +462,22 @@ static bool updatePosteriorPMag(algorithmESKF_t *instance)
         return false;
     }
 
-    // K * H
-    mathMatrix_t K_H_mag;
-    float K_H_mag_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_H_mag, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_H_mag_data);
-    mathMatrixMult(&instance->K_mag_, &instance->H_mag_, &K_H_mag);
-    // (I - K * H)
-    mathMatrix_t identity;
-    float identity_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&identity, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, identity_data);
-    mathMatrixSetIdentity(&identity);
-    mathMatrix_t I_K_H_mag;
-    float I_K_H_mag_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_mag, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_data);
-    mathMatrixSub(&identity, &K_H_mag, &I_K_H_mag);
-    // (I - K * H)^T
-    mathMatrix_t I_K_H_mag_T;
-    float I_K_H_mag_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_mag_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_T_data);
-    mathMatrixTranspose(&I_K_H_mag, &I_K_H_mag_T);
-    // (I - K * H) * P_priori
-    mathMatrix_t I_K_H_mag_P_priori;
-    float I_K_H_mag_P_priori_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_mag_P_priori, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_P_priori_data);
-    mathMatrixMult(&I_K_H_mag, &instance->P_, &I_K_H_mag_P_priori);
-    // (I - K * H) * P_priori * (I - K * H)^T
-    mathMatrix_t I_K_H_mag_P_priori_I_K_H_mag_T;
-    float I_K_H_mag_P_priori_I_K_H_mag_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_mag_P_priori_I_K_H_mag_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_P_priori_I_K_H_mag_T_data);
-    mathMatrixMult(&I_K_H_mag_P_priori, &I_K_H_mag_T, &I_K_H_mag_P_priori_I_K_H_mag_T);
-    // K^T
-    mathMatrix_t K_mag_T;
-    float K_mag_T_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_mag_T, ALGORITHM_ESKF_MEASURE_MAG_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_mag_T_data);
-    mathMatrixTranspose(&instance->K_mag_, &K_mag_T);
-    // K * R
-    mathMatrix_t K_R_mag;
-    float K_R_mag_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
-    mathMatrixInit(&K_R_mag, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, K_R_mag_data);
-    mathMatrixMult(&instance->K_mag_, &instance->R_mag_, &K_R_mag);
-    // K * R * K^T
-    mathMatrix_t K_R_K_mag_T;
-    float K_R_K_mag_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_R_K_mag_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_R_K_mag_T_data);
-    mathMatrixMult(&K_R_mag, &K_mag_T, &K_R_K_mag_T);
-    // P_posterior = (I - K * H) * P_priori * (I - K * H)^T + K * R * K^T
-    mathMatrixAdd(&I_K_H_mag_P_priori_I_K_H_mag_T, &K_R_K_mag_T, &instance->P_);
-    mathMatrixSetSymmetricInPlace(&instance->P_);
-
-    return true;
+    // 优化原理：full mag 同样是 3 维观测，直接复用低秩 Joseph 展开。
+    return updatePosteriorP3DJosephOptimized(instance,
+                                             instance->K_mag_data_,
+                                             instance->H_mag_data_,
+                                             instance->S_mag_data_);
 }
 
 static bool updatePosteriorPMagYawOnly(algorithmESKF_t *instance,
-                                       const mathMatrix_t *H_mag_yaw,
-                                       const mathMatrix_t *K_mag_yaw,
-                                       float R_mag_yaw)
+                                       const float *P_H_mag_yaw_T_9x1,
+                                       float S_mag_yaw)
 {
-    if (instance == NULL || instance->is_initialized_ == false || H_mag_yaw == NULL || K_mag_yaw == NULL) {
+    if (instance == NULL || instance->is_initialized_ == false || P_H_mag_yaw_T_9x1 == NULL) {
         return false;
     }
 
-    mathMatrix_t K_H_mag_yaw;
-    float K_H_mag_yaw_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_H_mag_yaw, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_H_mag_yaw_data);
-    mathMatrixMult(K_mag_yaw, H_mag_yaw, &K_H_mag_yaw);
-
-    mathMatrix_t identity;
-    float identity_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&identity, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, identity_data);
-    mathMatrixSetIdentity(&identity);
-
-    mathMatrix_t I_K_H_mag_yaw;
-    float I_K_H_mag_yaw_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_mag_yaw, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_yaw_data);
-    mathMatrixSub(&identity, &K_H_mag_yaw, &I_K_H_mag_yaw);
-
-    mathMatrix_t I_K_H_mag_yaw_T;
-    float I_K_H_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_yaw_T_data);
-    mathMatrixTranspose(&I_K_H_mag_yaw, &I_K_H_mag_yaw_T);
-
-    mathMatrix_t I_K_H_mag_yaw_P_priori;
-    float I_K_H_mag_yaw_P_priori_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_mag_yaw_P_priori, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, I_K_H_mag_yaw_P_priori_data);
-    mathMatrixMult(&I_K_H_mag_yaw, &instance->P_, &I_K_H_mag_yaw_P_priori);
-
-    mathMatrix_t I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T;
-    float I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T,
-                   ALGORITHM_ESKF_ERROR_STATE_DIM,
-                   ALGORITHM_ESKF_ERROR_STATE_DIM,
-                   I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T_data);
-    mathMatrixMult(&I_K_H_mag_yaw_P_priori, &I_K_H_mag_yaw_T, &I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T);
-
-    mathMatrix_t K_mag_yaw_T;
-    float K_mag_yaw_T_data[1U * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_mag_yaw_T, 1U, ALGORITHM_ESKF_ERROR_STATE_DIM, K_mag_yaw_T_data);
-    mathMatrixTranspose(K_mag_yaw, &K_mag_yaw_T);
-
-    mathMatrix_t K_R_mag_yaw;
-    float K_R_mag_yaw_data[ALGORITHM_ESKF_ERROR_STATE_DIM * 1U];
-    mathMatrixInit(&K_R_mag_yaw, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, K_R_mag_yaw_data);
-    if (mathMatrixScale(K_mag_yaw, R_mag_yaw, &K_R_mag_yaw) != ARM_MATH_SUCCESS) {
-        return false;
-    }
-
-    mathMatrix_t K_R_K_mag_yaw_T;
-    float K_R_K_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&K_R_K_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, K_R_K_mag_yaw_T_data);
-    mathMatrixMult(&K_R_mag_yaw, &K_mag_yaw_T, &K_R_K_mag_yaw_T);
-
-    mathMatrixAdd(&I_K_H_mag_yaw_P_priori_I_K_H_mag_yaw_T, &K_R_K_mag_yaw_T, &instance->P_);
-    mathMatrixSetSymmetricInPlace(&instance->P_);
-
-    return true;
+    return updatePosteriorPScalarJosephOptimized(instance, P_H_mag_yaw_T_9x1, S_mag_yaw);
 }
 
 static bool clearErrorStates(algorithmESKF_t *instance)
@@ -562,36 +655,20 @@ bool algorithmESKFGyroPredict(algorithmESKF_t *instance, float measurement[ALGOR
     //
     // 计算误差状态转移矩阵PHI
     //
-    // 一阶近似
-    mathMatrix_t F_dt;
-    float F_dt_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&F_dt, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, F_dt_data);
-    mathMatrixScale(&instance->F_, dt, &F_dt);
-    mathMatrix_t identity;
-    float identity_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&identity, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, identity_data);
-    mathMatrixSetIdentity(&identity);
-    mathMatrixAdd(&identity, &F_dt, &instance->PHI_);
+    // 优化原理：固定 9x9 直接构造 PHI = I + F * dt，避免 scale + identity + add 三次通用矩阵调用。
+    eskfBuildPhiFirstOrder(instance->F_data_, dt, instance->PHI_data_);
 
     //
     // 状态误差协方差矩阵P传播
     //
+    // 优化原理：固定 9x9 乘法 + A * B^T，省掉额外转置矩阵和通用 arm_mat 路径。
     // 当前先验P = PHI * 当前后验P * PHI^T + Q
-    mathMatrix_t PHI_P_posterior_PHI_T;
-    float PHI_P_posterior_PHI_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&PHI_P_posterior_PHI_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, PHI_P_posterior_PHI_T_data);
-    mathMatrix_t PHI_T;
-    float PHI_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&PHI_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, PHI_T_data);
-    mathMatrixTranspose(&instance->PHI_, &PHI_T);
-    mathMatrix_t PHI_P_posterior;
-    float PHI_P_posterior_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM];
-    mathMatrixInit(&PHI_P_posterior, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, PHI_P_posterior_data);
-    mathMatrixMult(&instance->PHI_, &instance->P_, &PHI_P_posterior);
-    mathMatrixMult(&PHI_P_posterior, &PHI_T, &PHI_P_posterior_PHI_T);
-    mathMatrixAdd(&PHI_P_posterior_PHI_T, &instance->Q_, &instance->P_);
-    // 数值对称化
-    mathMatrixSetSymmetricInPlace(&instance->P_);
+    eskfMat9x9Mul(instance->PHI_data_, instance->P_data_, instance->temp_mat_9x9_2_data_);
+    eskfMat9x9MulTransB(instance->temp_mat_9x9_2_data_, instance->PHI_data_, instance->temp_mat_9x9_3_data_);
+    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
+        instance->P_data_[i] = instance->temp_mat_9x9_3_data_[i] + instance->Q_data_[i];
+    }
+    eskfMat9x9SymmetrizeInPlace(instance->P_data_);
 
     instance->dt_ = dt;
 
@@ -619,38 +696,30 @@ bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGOR
     //
     // 预测加速度计测量值
     // 
+    // 使用 instance 持有的 temp buffer，减少热路径栈占用。
     // 计算先验姿态旋转矩阵
     mathMatrix_t rotate_matrix_b_to_n;
-    float rotate_matrix_b_to_n_data[3U * 3U];
-    mathMatrixInit(&rotate_matrix_b_to_n, 3U, 3U, rotate_matrix_b_to_n_data);
-    mathQuaternionToRotationMatrix(&instance->nominal_state_quat_, rotate_matrix_b_to_n_data);
+    mathMatrixInit(&rotate_matrix_b_to_n, 3U, 3U, instance->temp_mat_3x3_0_data_);
+    mathQuaternionToRotationMatrix(&instance->nominal_state_quat_, instance->temp_mat_3x3_0_data_);
     mathMatrix_t rotate_matrix_n_to_b;
-    float rotate_matrix_n_to_b_data[3U * 3U];
-    mathMatrixInit(&rotate_matrix_n_to_b, 3U, 3U, rotate_matrix_n_to_b_data);
+    mathMatrixInit(&rotate_matrix_n_to_b, 3U, 3U, instance->temp_mat_3x3_1_data_);
     mathMatrixTranspose(&rotate_matrix_b_to_n, &rotate_matrix_n_to_b);
 
     // 计算预测加速度计测量值
     // accel_measure_predict = C_n_to_b * gravity_vec_n + bias_accel_priori
     mathMatrix_t gravity_vec_b;
-    float gravity_vec_b_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * 1U];
-    mathMatrixInit(&gravity_vec_b, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, 1U, gravity_vec_b_data);
+    mathMatrixInit(&gravity_vec_b, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, 1U, instance->temp_mat_3x1_0_data_);
     mathMatrixMult(&rotate_matrix_n_to_b, &instance->gravity_ref_n_, &gravity_vec_b);
-    mathMatrix_t accel_measure_predict;
-    float accel_measure_predict_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * 1U];
-    mathMatrixInit(&accel_measure_predict, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, 1U, accel_measure_predict_data);
     for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_ACCEL_DIM * 1U; i ++) {
-        accel_measure_predict_data[i] = gravity_vec_b_data[i] + instance->nomial_state_bias_accel_data_[i];
+        instance->temp_mat_3x1_1_data_[i] = instance->temp_mat_3x1_0_data_[i] + instance->nomial_state_bias_accel_data_[i];
     }
 
     // 
     // 计算加速度计测量残差
     //
     // accel_residual = accel_measure - accel_measure_predict
-    mathMatrix_t accel_residual;
-    float accel_residual_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * 1U];
-    mathMatrixInit(&accel_residual, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, 1U, accel_residual_data);
     for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_ACCEL_DIM * 1U; i ++) {
-        accel_residual_data[i] = measurement[i] - accel_measure_predict_data[i];
+        instance->temp_mat_3x1_2_data_[i] = measurement[i] - instance->temp_mat_3x1_1_data_[i];
     }
 
     //
@@ -661,60 +730,48 @@ bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGOR
         return false;
     }
     mathVector3_t gravity_vec_b_vec3;
-    memcpy(gravity_vec_b_vec3.v_, gravity_vec_b_data, sizeof(gravity_vec_b_data));
+    memcpy(gravity_vec_b_vec3.v_, instance->temp_mat_3x1_0_data_, sizeof(gravity_vec_b_vec3.v_));
     mathMatrix_t gravity_vec_b_skew;
-    float gravity_vec_b_skew_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
-    mathMatrixInit(&gravity_vec_b_skew, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, gravity_vec_b_skew_data);
-    mathVec3BuildSkewSymmetricMatrix(&gravity_vec_b_vec3, gravity_vec_b_skew_data);
+    mathMatrixInit(&gravity_vec_b_skew, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, instance->temp_mat_3x3_2_data_);
+    mathVec3BuildSkewSymmetricMatrix(&gravity_vec_b_vec3, instance->temp_mat_3x3_2_data_);
     mathMatrixSetBlockByMatrix(&instance->H_accel_, 0U, 0U, &gravity_vec_b_skew);
     mathMatrixSetBlockIdentity(&instance->H_accel_, 0U, ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM + ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM, ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM);
 
-    // 
+    //
     // 计算创新协方差矩阵S
     //
     // S_accel = H_accel * P_priori * H_accel^T + R_accel
-    // H_accel^T
-    mathMatrix_t H_accel_T;
-    float H_accel_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
-    mathMatrixInit(&H_accel_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, H_accel_T_data);
-    mathMatrixTranspose(&instance->H_accel_, &H_accel_T);
-    // P_priori * H_accel^T
-    mathMatrix_t P_priori_H_accel_T;
-    float P_priori_H_accel_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
-    mathMatrixInit(&P_priori_H_accel_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, P_priori_H_accel_T_data);
-    mathMatrixMult(&instance->P_, &H_accel_T, &P_priori_H_accel_T);
-    // H_accel * P_priori * H_accel^T
-    mathMatrix_t H_accel_P_priori_H_accel_T;
-    float H_accel_P_priori_H_accel_T_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
-    mathMatrixInit(&H_accel_P_priori_H_accel_T, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, H_accel_P_priori_H_accel_T_data);
-    mathMatrixMult(&instance->H_accel_, &P_priori_H_accel_T, &H_accel_P_priori_H_accel_T);
-    mathMatrixAdd(&H_accel_P_priori_H_accel_T, &instance->R_accel_, &instance->S_accel_);
+    // 优化原理：9x9 * 9x3 和 3x9 * 9x3 都按固定维度展开，减少小矩阵通用接口开销。
+    eskfMat9x9Mul9x3TransB(instance->P_data_, instance->H_accel_data_, instance->temp_mat_9x3_1_data_);
+    eskfMat3x9Mul9x3(instance->H_accel_data_, instance->temp_mat_9x3_1_data_, instance->temp_mat_3x3_3_data_);
+    for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM; i++) {
+        instance->S_accel_data_[i] = instance->temp_mat_3x3_3_data_[i] + instance->R_accel_data_[i];
+    }
 
     //
     // 计算卡尔曼增益K
     //
     // K_accel = P_priori * H_accel^T * S_accel^-1
     mathMatrix_t S_accel_inv;
-    float S_accel_inv_data[ALGORITHM_ESKF_MEASURE_ACCEL_DIM * ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
-    mathMatrixInit(&S_accel_inv, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, S_accel_inv_data);
+    mathMatrixInit(&S_accel_inv, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, instance->temp_mat_3x3_4_data_);
     if (mathMatrixInverse(&instance->S_accel_, &S_accel_inv) != ARM_MATH_SUCCESS) {
         return false;
     }
     // 创新卡方门限不通过，本轮不使用accel更新，但不视为滤波失败
     float accel_innovation_chi_square = 0.0f;
-    if (computeAccelInnovationChiSquare(accel_residual_data, &S_accel_inv, &accel_innovation_chi_square) == false) {
+    if (computeAccelInnovationChiSquare(instance->temp_mat_3x1_2_data_, &S_accel_inv, &accel_innovation_chi_square) == false) {
         return false;
     }
     if (accel_innovation_chi_square > ALGORITHM_ESKF_ACCEL_CHI_SQUARE_THRESHOLD) {
         return true;
     }
-    mathMatrixMult(&P_priori_H_accel_T, &S_accel_inv, &instance->K_accel_);
+    eskfMat9x3Mul3x3(instance->temp_mat_9x3_1_data_, instance->temp_mat_3x3_4_data_, instance->K_accel_data_);
 
     //
     // 计算误差状态后验估计error_states,9x1
     //
     // error_states_posterior = K_accel * accel_residual
-    mathMatrixMult(&instance->K_accel_, &accel_residual, &instance->error_states_);
+    eskfMat9x3Mul3x1(instance->K_accel_data_, instance->temp_mat_3x1_2_data_, instance->error_states_data_);
 
     // 
     // 注入误差到名义中
@@ -776,40 +833,32 @@ bool algorithmESKFMagUpdate(algorithmESKF_t *instance, float measurement[ALGORIT
     //
     // 预测磁力计测量值
     // 
+    // 使用 instance 持有的 temp buffer，减少热路径栈占用。
     // 计算先验姿态旋转矩阵
     mathMatrix_t rotate_matrix_b_to_n;
-    float rotate_matrix_b_to_n_data[3U * 3U];
-    mathMatrixInit(&rotate_matrix_b_to_n, 3U, 3U, rotate_matrix_b_to_n_data);
-    if (mathQuaternionToRotationMatrix(&instance->nominal_state_quat_, rotate_matrix_b_to_n_data) == false) {
+    mathMatrixInit(&rotate_matrix_b_to_n, 3U, 3U, instance->temp_mat_3x3_0_data_);
+    if (mathQuaternionToRotationMatrix(&instance->nominal_state_quat_, instance->temp_mat_3x3_0_data_) == false) {
         return false;
     }
     mathMatrix_t rotate_matrix_n_to_b;
-    float rotate_matrix_n_to_b_data[3U * 3U];
-    mathMatrixInit(&rotate_matrix_n_to_b, 3U, 3U, rotate_matrix_n_to_b_data);
+    mathMatrixInit(&rotate_matrix_n_to_b, 3U, 3U, instance->temp_mat_3x3_1_data_);
     mathMatrixTranspose(&rotate_matrix_b_to_n, &rotate_matrix_n_to_b);
 
     // 计算预测磁力计测量值
     // mag_measure_predict = C_n_to_b * geo_mag_ref_dir
     mathMatrix_t geo_mag_ref_dir_vec_b;
-    float geo_mag_ref_dir_vec_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
-    mathMatrixInit(&geo_mag_ref_dir_vec_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, geo_mag_ref_dir_vec_b_data);
+    mathMatrixInit(&geo_mag_ref_dir_vec_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, instance->temp_mat_3x1_0_data_);
     mathMatrixMult(&rotate_matrix_n_to_b, &instance->geo_mag_ref_dir_n_, &geo_mag_ref_dir_vec_b);
-    mathMatrix_t mag_measure_predict;
-    float mag_measure_predict_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
-    mathMatrixInit(&mag_measure_predict, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, mag_measure_predict_data);
     for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U; i ++) {
-        mag_measure_predict_data[i] = geo_mag_ref_dir_vec_b_data[i];
+        instance->temp_mat_3x1_1_data_[i] = instance->temp_mat_3x1_0_data_[i];
     }
 
     // 
     // 计算磁力计测量残差
     //
     // mag_residual = mag_measure - mag_measure_predict
-    mathMatrix_t mag_residual;
-    float mag_residual_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
-    mathMatrixInit(&mag_residual, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, mag_residual_data);
     for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U; i ++) {
-        mag_residual_data[i] = mag_measurement_used.v_[i] - mag_measure_predict_data[i];
+        instance->temp_mat_3x1_2_data_[i] = mag_measurement_used.v_[i] - instance->temp_mat_3x1_1_data_[i];
     }
 
     //
@@ -819,61 +868,49 @@ bool algorithmESKFMagUpdate(algorithmESKF_t *instance, float measurement[ALGORIT
         return false;
     }
     mathVector3_t geo_mag_ref_dir_vec_b_vec3;
-    memcpy(geo_mag_ref_dir_vec_b_vec3.v_, geo_mag_ref_dir_vec_b_data, sizeof(geo_mag_ref_dir_vec_b_data));
+    memcpy(geo_mag_ref_dir_vec_b_vec3.v_, instance->temp_mat_3x1_0_data_, sizeof(geo_mag_ref_dir_vec_b_vec3.v_));
     mathMatrix_t geo_mag_ref_dir_vec_b_skew;
-    float geo_mag_ref_dir_vec_b_skew_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
-    mathMatrixInit(&geo_mag_ref_dir_vec_b_skew, ALGORITHM_ESKF_MEASURE_MAG_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, geo_mag_ref_dir_vec_b_skew_data);
-    if (mathVec3BuildSkewSymmetricMatrix(&geo_mag_ref_dir_vec_b_vec3, geo_mag_ref_dir_vec_b_skew_data) == false) {
+    mathMatrixInit(&geo_mag_ref_dir_vec_b_skew, ALGORITHM_ESKF_MEASURE_MAG_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, instance->temp_mat_3x3_2_data_);
+    if (mathVec3BuildSkewSymmetricMatrix(&geo_mag_ref_dir_vec_b_vec3, instance->temp_mat_3x3_2_data_) == false) {
         return false;
     }
     mathMatrixSetBlockByMatrix(&instance->H_mag_, 0U, 0U, &geo_mag_ref_dir_vec_b_skew);
 
-    // 
+    //
     // 计算创新协方差矩阵S
     //
     // S_mag = H_mag * P_priori * H_mag^T + R_mag
-    // H_mag^T
-    mathMatrix_t H_mag_T;
-    float H_mag_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
-    mathMatrixInit(&H_mag_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, H_mag_T_data);
-    mathMatrixTranspose(&instance->H_mag_, &H_mag_T);
-    // P_priori * H_mag^T
-    mathMatrix_t P_priori_H_mag_T;
-    float P_priori_H_mag_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
-    mathMatrixInit(&P_priori_H_mag_T, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, P_priori_H_mag_T_data);
-    mathMatrixMult(&instance->P_, &H_mag_T, &P_priori_H_mag_T);
-    // H_mag * P_priori * H_mag^T
-    mathMatrix_t H_mag_P_priori_H_mag_T;
-    float H_mag_P_priori_H_mag_T_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
-    mathMatrixInit(&H_mag_P_priori_H_mag_T, ALGORITHM_ESKF_MEASURE_MAG_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, H_mag_P_priori_H_mag_T_data);
-    mathMatrixMult(&instance->H_mag_, &P_priori_H_mag_T, &H_mag_P_priori_H_mag_T);
-    mathMatrixAdd(&H_mag_P_priori_H_mag_T, &instance->R_mag_, &instance->S_mag_);
+    // 优化原理：9x9 * 9x3 和 3x9 * 9x3 都按固定维度展开，减少小矩阵通用接口开销。
+    eskfMat9x9Mul9x3TransB(instance->P_data_, instance->H_mag_data_, instance->temp_mat_9x3_0_data_);
+    eskfMat3x9Mul9x3(instance->H_mag_data_, instance->temp_mat_9x3_0_data_, instance->temp_mat_3x3_3_data_);
+    for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM; i++) {
+        instance->S_mag_data_[i] = instance->temp_mat_3x3_3_data_[i] + instance->R_mag_data_[i];
+    }
 
     //
     // 计算卡尔曼增益K
     //
     // K_mag = P_priori * H_mag^T * S_mag^-1
     mathMatrix_t S_mag_inv;
-    float S_mag_inv_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
-    mathMatrixInit(&S_mag_inv, ALGORITHM_ESKF_MEASURE_MAG_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, S_mag_inv_data);
+    mathMatrixInit(&S_mag_inv, ALGORITHM_ESKF_MEASURE_MAG_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, instance->temp_mat_3x3_4_data_);
     if (mathMatrixInverse(&instance->S_mag_, &S_mag_inv) != ARM_MATH_SUCCESS) {
         return false;
     }
     // 创新卡方门限不通过，本轮不使用mag更新，但不视为滤波失败
     float mag_innovation_chi_square = 0.0f;
-    if (computeMagInnovationChiSquare(mag_residual_data, &S_mag_inv, &mag_innovation_chi_square) == false) {
+    if (computeMagInnovationChiSquare(instance->temp_mat_3x1_2_data_, &S_mag_inv, &mag_innovation_chi_square) == false) {
         return false;
     }
     if (mag_innovation_chi_square > ALGORITHM_ESKF_MAG_CHI_SQUARE_THRESHOLD) {
         return true;
     }
-    mathMatrixMult(&P_priori_H_mag_T, &S_mag_inv, &instance->K_mag_);
+    eskfMat9x3Mul3x3(instance->temp_mat_9x3_0_data_, instance->temp_mat_3x3_4_data_, instance->K_mag_data_);
 
     //
     // 计算误差状态后验估计error_states,9x1
     //
     // error_states_posterior = K_mag * mag_residual
-    mathMatrixMult(&instance->K_mag_, &mag_residual, &instance->error_states_);
+    eskfMat9x3Mul3x1(instance->K_mag_data_, instance->temp_mat_3x1_2_data_, instance->error_states_data_);
 
     // 
     // 注入误差到名义中
@@ -921,22 +958,20 @@ bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[
         }
     }
     mathMatrix_t mag_measure_b;
-    float mag_measure_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
-    mathMatrixInit(&mag_measure_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, mag_measure_b_data);
-    memcpy(mag_measure_b_data, mag_measurement_used.v_, sizeof(mag_measure_b_data));
+    // 使用 instance 持有的 temp buffer，减少热路径栈占用。
+    mathMatrixInit(&mag_measure_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, instance->temp_mat_3x1_0_data_);
+    memcpy(instance->temp_mat_3x1_0_data_, mag_measurement_used.v_, sizeof(mag_measurement_used.v_));
 
     //
     // 预测磁力计测量值
     //
     mathMatrix_t rotate_matrix_b_to_n;
-    float rotate_matrix_b_to_n_data[3U * 3U];
-    mathMatrixInit(&rotate_matrix_b_to_n, 3U, 3U, rotate_matrix_b_to_n_data);
-    if (mathQuaternionToRotationMatrix(&instance->nominal_state_quat_, rotate_matrix_b_to_n_data) == false) {
+    mathMatrixInit(&rotate_matrix_b_to_n, 3U, 3U, instance->temp_mat_3x3_0_data_);
+    if (mathQuaternionToRotationMatrix(&instance->nominal_state_quat_, instance->temp_mat_3x3_0_data_) == false) {
         return false;
     }
     mathMatrix_t rotate_matrix_n_to_b;
-    float rotate_matrix_n_to_b_data[3U * 3U];
-    mathMatrixInit(&rotate_matrix_n_to_b, 3U, 3U, rotate_matrix_n_to_b_data);
+    mathMatrixInit(&rotate_matrix_n_to_b, 3U, 3U, instance->temp_mat_3x3_1_data_);
     if (mathMatrixTranspose(&rotate_matrix_b_to_n, &rotate_matrix_n_to_b) == false) {
         return false;
     }
@@ -946,74 +981,66 @@ bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[
     float U_axis_n_data[3U * 1U] = {0.0f, 0.0f, 1.0f};
     mathMatrixInit(&U_axis_n, 3U, 1U, U_axis_n_data);
     mathMatrix_t U_axis_b;
-    float U_axis_b_data[3U * 1U] = {0.0f};
-    mathMatrixInit(&U_axis_b, 3U, 1U, U_axis_b_data);
+    mathMatrixInit(&U_axis_b, 3U, 1U, instance->temp_mat_3x1_1_data_);
     mathMatrixMult(&rotate_matrix_n_to_b, &U_axis_n, &U_axis_b);
-    if (mathVec3NormalizeInPlaceRaw(U_axis_b_data) == false) {
+    if (mathVec3NormalizeInPlaceRaw(instance->temp_mat_3x1_1_data_) == false) {
         return false;
     }
 
     // FL面投影矩阵 P_fl = I - u_b * u_b^T
     mathMatrix_t P_FL_b;
-    float P_FL_b_data[3U * 3U];
-    mathMatrixInit(&P_FL_b, 3U, 3U, P_FL_b_data);
+    mathMatrixInit(&P_FL_b, 3U, 3U, instance->temp_mat_3x3_2_data_);
     mathMatrix_t identity;
-    float identity_data[3U * 3U];
-    mathMatrixInit(&identity, 3U, 3U, identity_data);
+    mathMatrixInit(&identity, 3U, 3U, instance->temp_mat_3x3_3_data_);
     if (mathMatrixSetIdentity(&identity) == false) {
         return false;
     }
     mathMatrix_t U_axis_T_b;
-    float U_axis_T_b_data[1U * 3U];
-    mathMatrixInit(&U_axis_T_b, 1U, 3U, U_axis_T_b_data);
+    mathMatrixInit(&U_axis_T_b, 1U, 3U, instance->temp_mat_1x3_0_data_);
     if (mathMatrixTranspose(&U_axis_b, &U_axis_T_b) == false) {
         return false;
     }
     mathMatrix_t U_axis_U_axis_T_b;
-    float U_axis_U_axis_T_b_data[3U * 3U];
-    mathMatrixInit(&U_axis_U_axis_T_b, 3U, 3U, U_axis_U_axis_T_b_data);
+    mathMatrixInit(&U_axis_U_axis_T_b, 3U, 3U, instance->temp_mat_3x3_4_data_);
     mathMatrixMult(&U_axis_b, &U_axis_T_b, &U_axis_U_axis_T_b);
     mathMatrixSub(&identity, &U_axis_U_axis_T_b, &P_FL_b);
 
     // 参考磁向量投影到FL面
     mathMatrix_t geo_mag_ref_dir_vec_b;
-    float geo_mag_ref_dir_vec_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
-    mathMatrixInit(&geo_mag_ref_dir_vec_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, geo_mag_ref_dir_vec_b_data);
+    mathMatrixInit(&geo_mag_ref_dir_vec_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, instance->temp_mat_3x1_2_data_);
     mathMatrixMult(&rotate_matrix_n_to_b, &instance->geo_mag_ref_dir_n_, &geo_mag_ref_dir_vec_b);
     mathMatrix_t geo_mag_ref_dir_FL_vec_b;
-    float geo_mag_ref_dir_FL_vec_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
-    mathMatrixInit(&geo_mag_ref_dir_FL_vec_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, geo_mag_ref_dir_FL_vec_b_data);
+    mathMatrixInit(&geo_mag_ref_dir_FL_vec_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, instance->temp_mat_3x1_3_data_);
     mathMatrixMult(&P_FL_b, &geo_mag_ref_dir_vec_b, &geo_mag_ref_dir_FL_vec_b);
 
     float geo_mag_ref_dir_vec_b_norm = 0.0f;
     float geo_mag_ref_dir_FL_vec_b_norm = 0.0f;
-    if (mathVec3NormRaw(geo_mag_ref_dir_vec_b_data, &geo_mag_ref_dir_vec_b_norm) == false ||
-        mathVec3NormRaw(geo_mag_ref_dir_FL_vec_b_data, &geo_mag_ref_dir_FL_vec_b_norm) == false) {
+    if (mathVec3NormRaw(instance->temp_mat_3x1_2_data_, &geo_mag_ref_dir_vec_b_norm) == false ||
+        mathVec3NormRaw(instance->temp_mat_3x1_3_data_, &geo_mag_ref_dir_FL_vec_b_norm) == false) {
         return false;
     }
     if (geo_mag_ref_dir_FL_vec_b_norm < ALGORITHM_ESKF_MAG_YAW_ONLY_REF_NORM_GATE_RATIO * geo_mag_ref_dir_vec_b_norm) {
         return true;
     }
-    if (mathVec3NormalizeInPlaceRaw(geo_mag_ref_dir_FL_vec_b_data) == false) {
+    if (mathVec3NormalizeInPlaceRaw(instance->temp_mat_3x1_3_data_) == false) {
         return false;
     }
 
     // 测量磁向量投影到FL面
     mathMatrix_t mag_measure_FL_b;
-    float mag_measure_FL_b_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * 1U];
-    mathMatrixInit(&mag_measure_FL_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, mag_measure_FL_b_data);
+    mathMatrixInit(&mag_measure_FL_b, ALGORITHM_ESKF_MEASURE_MAG_DIM, 1U, instance->temp_mat_3x1_4_data_);
     mathMatrixMult(&P_FL_b, &mag_measure_b, &mag_measure_FL_b);
 
     float mag_measure_b_norm = 0.0f;
     float mag_measure_FL_b_norm = 0.0f;
-    if (mathVec3NormRaw(mag_measure_b_data, &mag_measure_b_norm) == false ||
-        mathVec3NormRaw(mag_measure_FL_b_data, &mag_measure_FL_b_norm) == false) {
+    if (mathVec3NormRaw(instance->temp_mat_3x1_0_data_, &mag_measure_b_norm) == false ||
+        mathVec3NormRaw(instance->temp_mat_3x1_4_data_, &mag_measure_FL_b_norm) == false) {
         return false;
     }
     if (mag_measure_FL_b_norm < ALGORITHM_ESKF_MAG_YAW_ONLY_MEASURE_NORM_GATE_RATIO * mag_measure_b_norm) {
         return true;
     }
-    if (mathVec3NormalizeInPlaceRaw(mag_measure_FL_b_data) == false) {
+    if (mathVec3NormalizeInPlaceRaw(instance->temp_mat_3x1_4_data_) == false) {
         return false;
     }
 
@@ -1023,9 +1050,9 @@ bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[
     mathVector3_t mag_measure_FL_b_vec3 = {0};
     mathVector3_t U_axis_b_vec3 = {0};
     mathVector3_t s_FL_b_vec3 = {0};
-    memcpy(geo_mag_ref_dir_FL_vec_b_vec3.v_, geo_mag_ref_dir_FL_vec_b_data, sizeof(geo_mag_ref_dir_FL_vec_b_vec3.v_));
-    memcpy(mag_measure_FL_b_vec3.v_, mag_measure_FL_b_data, sizeof(mag_measure_FL_b_vec3.v_));
-    memcpy(U_axis_b_vec3.v_, U_axis_b_data, sizeof(U_axis_b_vec3.v_));
+    memcpy(geo_mag_ref_dir_FL_vec_b_vec3.v_, instance->temp_mat_3x1_3_data_, sizeof(geo_mag_ref_dir_FL_vec_b_vec3.v_));
+    memcpy(mag_measure_FL_b_vec3.v_, instance->temp_mat_3x1_4_data_, sizeof(mag_measure_FL_b_vec3.v_));
+    memcpy(U_axis_b_vec3.v_, instance->temp_mat_3x1_1_data_, sizeof(U_axis_b_vec3.v_));
     if (mathVec3Cross(&U_axis_b_vec3, &geo_mag_ref_dir_FL_vec_b_vec3, &s_FL_b_vec3) == false) {
         return false;
     }
@@ -1047,33 +1074,28 @@ bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[
     //
     // 一阶雅可比 H_psi = s_h^T * [h_h^b]_x
     //
-    float geo_mag_ref_dir_FL_vec_b_skew_data[ALGORITHM_ESKF_MEASURE_MAG_DIM * ALGORITHM_ESKF_MEASURE_MAG_DIM];
-    if (mathVec3BuildSkewSymmetricMatrix(&geo_mag_ref_dir_FL_vec_b_vec3, geo_mag_ref_dir_FL_vec_b_skew_data) == false) {
+    if (mathVec3BuildSkewSymmetricMatrix(&geo_mag_ref_dir_FL_vec_b_vec3, instance->temp_mat_3x3_5_data_) == false) {
         return false;
     }
-    mathMatrix_t H_mag_yaw;
-    float H_mag_yaw_data[1U * ALGORITHM_ESKF_ERROR_STATE_DIM] = {0.0f};
-    mathMatrixInit(&H_mag_yaw, 1U, ALGORITHM_ESKF_ERROR_STATE_DIM, H_mag_yaw_data);
+    memset(instance->temp_mat_1x9_0_data_, 0, sizeof(instance->temp_mat_1x9_0_data_));
     for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM; c++) {
-        H_mag_yaw_data[c] = s_FL_b_vec3.v_[0] * geo_mag_ref_dir_FL_vec_b_skew_data[c] +
-                            s_FL_b_vec3.v_[1] * geo_mag_ref_dir_FL_vec_b_skew_data[3U + c] +
-                            s_FL_b_vec3.v_[2] * geo_mag_ref_dir_FL_vec_b_skew_data[6U + c];
+        instance->temp_mat_1x9_0_data_[c] = s_FL_b_vec3.v_[0] * instance->temp_mat_3x3_5_data_[c] +
+                                             s_FL_b_vec3.v_[1] * instance->temp_mat_3x3_5_data_[3U + c] +
+                                             s_FL_b_vec3.v_[2] * instance->temp_mat_3x3_5_data_[6U + c];
     }
 
     //
     // 标量创新协方差 S = H P H^T + R
     //
-    mathMatrix_t H_mag_yaw_T;
-    float H_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * 1U];
-    mathMatrixInit(&H_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, H_mag_yaw_T_data);
-    if (mathMatrixTranspose(&H_mag_yaw, &H_mag_yaw_T) == false) {
-        return false;
+    // 优化原理：标量观测只需要 ph = P * h^T，一个 9x1 即可，不必走通用矩阵乘法。
+    for (size_t r = 0; r < ALGORITHM_ESKF_ERROR_STATE_DIM; r++) {
+        float sum = 0.0f;
+        for (size_t c = 0; c < ALGORITHM_ESKF_ERROR_STATE_DIM; c++) {
+            sum += instance->P_data_[r * ALGORITHM_ESKF_ERROR_STATE_DIM + c] *
+                   instance->temp_mat_1x9_0_data_[c];
+        }
+        instance->temp_mat_9x1_1_data_[r] = sum;
     }
-
-    mathMatrix_t P_priori_H_mag_yaw_T;
-    float P_priori_H_mag_yaw_T_data[ALGORITHM_ESKF_ERROR_STATE_DIM * 1U];
-    mathMatrixInit(&P_priori_H_mag_yaw_T, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, P_priori_H_mag_yaw_T_data);
-    mathMatrixMult(&instance->P_, &H_mag_yaw_T, &P_priori_H_mag_yaw_T);
 
     // 测量噪声协方差矩阵R
     // 请注意，这里的写法只适用于磁噪声各向同性(mag_noise_x = mag_noise_y = mag_noise_z)的情况，更严谨的是R_mag_yaw = (s_h * R_mag * s_n^T) / rou^2
@@ -1087,7 +1109,7 @@ bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[
 
     float S_mag_yaw = R_mag_yaw;
     for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
-        S_mag_yaw += H_mag_yaw_data[i] * P_priori_H_mag_yaw_T_data[i];
+        S_mag_yaw += instance->temp_mat_1x9_0_data_[i] * instance->temp_mat_9x1_1_data_[i];
     }
     if (S_mag_yaw <= 1.0e-6f) {
         return false;
@@ -1101,25 +1123,22 @@ bool algorithmESKFMagUpdateYawOnly(algorithmESKF_t *instance, float measurement[
     //
     // 标量卡尔曼增益
     //
-    mathMatrix_t K_mag_yaw;
-    float K_mag_yaw_data[ALGORITHM_ESKF_ERROR_STATE_DIM * 1U];
-    mathMatrixInit(&K_mag_yaw, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, K_mag_yaw_data);
     for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
-        K_mag_yaw_data[i] = P_priori_H_mag_yaw_T_data[i] / S_mag_yaw;
+        instance->temp_mat_9x1_0_data_[i] = instance->temp_mat_9x1_1_data_[i] / S_mag_yaw;
     }
 
     //
     // 后验误差状态
     //
     for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DIM; i++) {
-        instance->error_states_data_[i] = K_mag_yaw_data[i] * psi_residual;
+        instance->error_states_data_[i] = instance->temp_mat_9x1_0_data_[i] * psi_residual;
     }
 
     if (injectErrorToNominal(instance) == false) {
         return false;
     }
 
-    if (updatePosteriorPMagYawOnly(instance, &H_mag_yaw, &K_mag_yaw, R_mag_yaw) == false) {
+    if (updatePosteriorPMagYawOnly(instance, instance->temp_mat_9x1_1_data_, S_mag_yaw) == false) {
         return false;
     }
 

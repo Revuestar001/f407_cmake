@@ -17,8 +17,7 @@
 #include "bmi088.h"
 #include "ist8310.h"
 #include "error_state_kalman_filter.h"
-#include "matrix.h"
-#include "vector3.h"
+#include "user_math.h"
 #include "app_ins.h"
 #include "app_def.h"
 #include "user_def.h"
@@ -183,23 +182,10 @@ typedef struct app_ins
 } appINSInstance_t;
 
 static appINSInstance_t app_ins_ = {0};
-static uint32_t ins_loop_time = 0;
-static uint32_t ins_loop_time_max = 0;
+volatile static uint32_t ins_loop_time = 0;
+volatile static uint32_t ins_loop_time_max = 0;
 
-// 3 维向量模长
-static float appINSGetVectorNorm3f(const float vector[3])
-{
-    float norm_square = vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2];
-    float norm = 0.0f;
-
-    if (arm_sqrt_f32(norm_square, &norm) != ARM_MATH_SUCCESS) {
-        return 0.0f;
-    }
-
-    return norm;
-}
-
-// gyro 校准应用点：只减 bias
+// gyro 校准应用,只减 bias
 // static void appINSApplyGyroBias(const float gyro[3], const float gyro_bias[3], float gyro_out[3])
 // {
 //     gyro_out[0] = gyro[0] - gyro_bias[0];
@@ -419,7 +405,7 @@ static void appINSUpdateMAGRecordData(void)
         app_ins_.mag_record_data_.mag_ut_[i] = app_ins_.latest_mag_data_.mag_ut_[i];
     }
 
-    app_ins_.mag_record_data_.mag_norm_ut_ = appINSGetVectorNorm3f(app_ins_.latest_mag_data_.mag_ut_);
+    mathVec3NormRaw(app_ins_.latest_mag_data_.mag_ut_, &app_ins_.mag_record_data_.mag_norm_ut_);
 
     horizontal_norm_square =
         app_ins_.latest_mag_data_.mag_ut_[0] * app_ins_.latest_mag_data_.mag_ut_[0] +
@@ -453,7 +439,8 @@ static void appINSUpdateMAGRecordData(void)
 // gyro 足够小 且 accel 模长接近 1g
 static bool appINSIsIMUStationary(void)
 {
-    float accel_norm = appINSGetVectorNorm3f(app_ins_.latest_imu_data_.accel_ms2_);
+    float accel_norm;
+    mathVec3NormRaw(app_ins_.latest_imu_data_.accel_ms2_, &accel_norm);
 
     return fabsf(app_ins_.latest_imu_data_.gyro_rads_[0]) <= APP_INS_CALIB_GYRO_TOLERANCE_RADS &&
            fabsf(app_ins_.latest_imu_data_.gyro_rads_[1]) <= APP_INS_CALIB_GYRO_TOLERANCE_RADS &&
@@ -1016,7 +1003,7 @@ void appINSTaskEntry(void *argument)
     for (;;) {
         uint32_t notify_count = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(APP_INS_MAX_UPDATE_WAIT_MS));
 
-        uint32_t start_cnt = bspDWTGetCount();
+        
 
         if (notify_count > 0U) {
             // 收到 IMU 通知，更新一帧 IMU 数据
@@ -1038,7 +1025,7 @@ void appINSTaskEntry(void *argument)
                 accel_calib_test_started = true;
             }
         }
-
+        uint32_t start_cnt = bspDWTGetCount();
         if (app_ins_.stage_ == APP_INS_RUNNING && app_ins_.mode_ == APP_INS_SERVICE_NORMAL) {
             if (appINSRunEKF() == false) {
                 app_ins_.error_count_++;

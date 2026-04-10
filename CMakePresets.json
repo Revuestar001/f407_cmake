@@ -23,6 +23,13 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "Profile",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Profile"
+            }
         }
     ],
     "buildPresets": [
@@ -33,6 +40,10 @@
         {
             "name": "Release",
             "configurePreset": "Release"
+        },
+        {
+            "name": "Profile",
+            "configurePreset": "Profile"
         }
     ]
 }
