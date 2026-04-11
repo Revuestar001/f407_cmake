@@ -6,7 +6,7 @@
 #include "bmi088_register_address.h"
 #include "bsp_gpio.h"
 #include "bsp_spi.h"
-#include "user_def.h"
+#include "general_math.h"
 
 // bmi088读写，读的时候地址高位一定为1，写的时候地址高位一定为0
 #define DEVICE_BMI088_REG_TO_WRITE_CMD(reg)  ((reg) & 0x7FU)

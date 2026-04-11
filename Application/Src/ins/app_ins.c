@@ -20,7 +20,6 @@
 #include "user_math.h"
 #include "app_ins.h"
 #include "app_def.h"
-#include "user_def.h"
 
 #define APP_INS_CALIB_IMU_ACCEL_TOLERANCE_MS2 (0.1f * STANDARD_GRAVITY_M_S2) // 用于判断IMU是否静止
 #define APP_INS_CALIB_IMU_WARM_UP_TIME_MS 500U

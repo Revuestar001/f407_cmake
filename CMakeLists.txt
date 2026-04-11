@@ -51,6 +51,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/bsp_can/bsp_can.c
     Bsp/Src/bsp_dwt/bsp_dwt.c
     Bsp/Src/bsp_i2c/bsp_i2c.c
+    Bsp/Src/bsp_critical/bsp_critical.c
     Bsp/Src/bsp_board.c
 
     Module/Src/util/ring_buffer.c
@@ -58,10 +59,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/rc_mapper/rc_mapper.c
     Module/Src/device/imu/bmi088.c
     Module/Src/device/magnetometer/ist8310.c
+    Module/Src/device/motor/dji_m3508.c
     Module/Src/algorithm/math/quaternion.c
     Module/Src/algorithm/math/vector3.c
     Module/Src/algorithm/math/matrix.c
     Module/Src/algorithm/math/angle.c
+    Module/Src/algorithm/math/general_math.c
     Module/Src/algorithm/eskf/error_state_kalman_filter.c
 
     Application/Src/remote_control/app_remote_control.c
@@ -72,12 +75,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
-    Bsp/Inc/bsp_gpio
-    Bsp/Inc/bsp_uart
-    Bsp/Inc/bsp_spi
-    Bsp/Inc/bsp_can
-    Bsp/Inc/bsp_dwt
-    Bsp/Inc/bsp_i2c
+    Bsp/Inc/bsp_gpio/
+    Bsp/Inc/bsp_uart/
+    Bsp/Inc/bsp_spi/
+    Bsp/Inc/bsp_can/
+    Bsp/Inc/bsp_dwt/
+    Bsp/Inc/bsp_i2c/
+    Bsp/Inc/bsp_critical/
     Bsp/Inc/
 
     Module/Inc/util/
@@ -85,6 +89,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/rc_mapper/
     Module/Inc/device/imu/
     Module/Inc/device/magnetometer/
+    Module/Inc/device/motor/
     Module/Inc/algorithm/math/
     Module/Inc/algorithm/eskf/
 

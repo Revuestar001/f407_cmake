@@ -44,6 +44,7 @@ typedef struct can_rx_route
     void *route_owner_;
 } bspCANRxRoute_t;
 
+// 请注意，这个函数暂时没有返回值，调用者不知到到底有没有注册成功，需要修改！！！
 void bspCANRxCallbackRegister(bspCANInstance_t *instance, bspCANRxRoute_t rx_route);
 void bspCANErrorCallbackRegister(bspCANInstance_t *instance, bspCANErrorCallback_f callback);
 

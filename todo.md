@@ -207,3 +207,103 @@ App control 才决定机器人干什么
 你只要先守住这个，就不会乱。
 
 6.rc_mapper的开关边沿检测逻辑还要改，因为边沿状态就保存一瞬间
+
+7.
+如果你真要 OOP，我建议做 C 风格 vtable + base struct，但只抽象“执行器电机”，不要抽象所有 device。
+                                                                                                                                                                                                        
+  大概结构是这样：                                                                                                                                                                                      
+                                                                                                                                                                                                        
+  typedef struct actuator_motor actuatorMotor_t;                                                                                                                                                        
+                                                                                                                                                                                                        
+  typedef struct {                                                                                                                                                                                      
+      motorStatus_e (*update_feedback)(void *device);                                                                                                                                                   
+      motorStatus_e (*get_feedback)(void *device, motorFeedBackData_t *feedback);                                                                                                                       
+      bool (*set_current_ref)(void *device, float current_ref_A);                                                                                                                                       
+      bool (*set_work_status)(void *device, motorWorkStatus_e work_status);                                                                                                                             
+      motorStatus_e (*group_send)(void *device);                                                                                                                                                        
+  } actuatorMotorOps_t;                                                                                                                                                                                 
+                                                                                                                                                                                                        
+  struct actuator_motor {                                                                                                                                                                               
+      void *device_;                                                                                                                                                                                    
+      const actuatorMotorOps_t *ops_;                                                                                                                                                                   
+                                                                                                                                                                                                        
+      actuatorMotorControlMode_e control_mode_;                                                                                                                                                         
+                                                                                                                                                                                                        
+      pidController_t speed_pid_;                                                                                                                                                                       
+      pidController_t angle_pid_;                                                                                                                                                                       
+                                                                                                                                                                                                        
+      motorReferenceData_t ref_;                                                                                                                                                                        
+      motorFeedBackData_t fb_;                                                                                                                                                                          
+                                                                                                                                                                                                        
+      float current_limit_A_;                                                                                                                                                                           
+  };                                                                                                                                                                                                    
+                                                                                                                                                                                                        
+  M3508 做一个 adapter：                                                                                                                                                                                
+                                                                                                                                                                                                        
+  static motorStatus_e actuatorM3508UpdateFeedback(void *device)                                                                                                                                        
+  {                                                                                                                                                                                                     
+      return motorDJIM3508UpdateFeedbackData((motorDJIM3508Instance_t *)device);                                                                                                                        
+  }                                                                                                                                                                                                     
+                                                                                                                                                                                                        
+  static motorStatus_e actuatorM3508GetFeedback(void *device, motorFeedBackData_t *feedback)                                                                                                            
+  {                                                                                                                                                                                                     
+      return motorDJIM3508GetFeedbackData((motorDJIM3508Instance_t *)device, feedback);                                                                                                                 
+  }                                                                                                                                                                                                     
+                                                                                                                                                                                                        
+  static bool actuatorM3508SetCurrentRef(void *device, float current_ref_A)                                                                                                                             
+  {                                                                                                                                                                                                     
+      return motorDJIM3508SetCurrentRef((motorDJIM3508Instance_t *)device, current_ref_A);                                                                                                              
+  }                                                                                                                                                                                                     
+                                                                                                                                                                                                        
+  static bool actuatorM3508SetWorkStatus(void *device, motorWorkStatus_e work_status)                                                                                                                   
+  {                                                                                                                                                                                                     
+      return motorDJIM3508SetWorkStatus((motorDJIM3508Instance_t *)device, work_status);                                                                                                                
+  }                                                                                                                                                                                                     
+                                                                                                                                                                                                        
+  然后：                                                                                                                                                                                                
+                                                                                                                                                                                                        
+  static const actuatorMotorOps_t m3508_ops = {                                                                                                                                                         
+      .update_feedback = actuatorM3508UpdateFeedback,                                                                                                                                                   
+      .get_feedback = actuatorM3508GetFeedback,                                                                                                                                                         
+      .set_current_ref = actuatorM3508SetCurrentRef,                                                                                                                                                    
+      .set_work_status = actuatorM3508SetWorkStatus,                                                                                                                                                    
+      .group_send = NULL, // 我不建议单电机 actuator 直接负责 group send                                                                                                                                
+  };                                                                                                                                                                                                    
+                                                                                                                                                                                                        
+  使用时：                                                                                                                                                                                              
+                                                                                                                                                                                                        
+  actuatorMotorConfig_t config = {                                                                                                                                                                      
+      .device_ = lf_m3508,                                                                                                                                                                              
+      .ops_ = &m3508_ops,                                                                                                                                                                               
+      .control_mode_ = ACTUATOR_MOTOR_CONTROL_SPEED,                                                                                                                                                    
+      .current_limit_A_ = 10.0f,                                                                                                                                                                        
+  };                                                                                                                                                                                                    
+                                                                                                                                                                                                        
+  actuatorMotorInit(&lf_actuator, &config);                                                                                                                                                             
+                                                                                                                                                                                                        
+  周期更新：                                                                                                                                                                                            
+                                                                                                                                                                                                        
+  actuatorMotorUpdate(&lf_actuator, dt_s);                                                                                                                                                              
+                                                                                                                                                                                                        
+  内部做：                                                                                                                                                                                              
+                                                                                                                                                                                                        
+  ops->update_feedback(device)                                                                                                                                                                          
+  ops->get_feedback(device, &fb)                                                                                                                                                                        
+  PID 计算                                                                                                                                                                                              
+  ops->set_current_ref(device, current_ref)                                                                                                                                                             
+                                                                                                                                                                                                        
+  但我强调一个点：group send 不适合放进单个 actuatorMotor 的 vtable。因为 M3508 的发送是 0x200/0x1FF 一帧控制 4 个电机，这是 group 语义，不是单电机语义。更适合 chassis 在所有 actuator 更新完之后调用：                                                                                                                                                                                                        
+  motorDJIM3508GroupSendByMotorInstance(lf_m3508);                                                                                                                                                      
+                                                                                                                                                                                                        
+  所以 OOP 版本的边界应该是：                                                                                                                                                                           
+                                                                                                                                                                                                        
+  actuatorMotor:                                                                                                                                                                                        
+  多态地控制一个电机输出 current_ref                                                                                                                                                                    
+                                                                                                                                                                                                        
+  具体 motor device:                                                                                                                                                                                    
+  实现 update_feedback / get_feedback / set_current_ref                                                                                                                                                 
+                                                                                                                                                                                                        
+  group send:                                                                                                                                                                                           
+  仍由具体 DJI device 层或 chassis 统一触发                                                                                                                                                             
+                                                                                                                                                                                                        
+  如果现在只有 M3508，我仍然建议先不写 vtable。你可以先写一个固定 M3508 的 actuatorM3508_t，等第二种电机来了再抽 ops，这样接口会更贴近真实需求。
