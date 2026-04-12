@@ -8,6 +8,7 @@ typedef enum
     MOTOR_OK = 0,
     MOTOR_TX_FAILURE,
     MOTOR_NO_NEW_DATA,
+    MOTOR_STOP,
     MOTOR_ERROR,
 } motorStatus_e;
 

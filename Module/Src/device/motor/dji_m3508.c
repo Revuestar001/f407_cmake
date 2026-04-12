@@ -409,3 +409,19 @@ motorStatus_e motorDJIM3508GetFeedbackData(motorDJIM3508Instance_t *instance, mo
 
     return MOTOR_OK;
 }
+
+bool motorDJIM3508GetCommitGroup(motorDJIM3508Instance_t *instance, const void **commit_bus, uint32_t *group_id)
+{
+    if (instance == NULL || commit_bus == NULL || group_id == NULL) {
+        return false;
+    }
+
+    if (instance->can_instance_ == NULL) {
+        return false;
+    }
+
+    *commit_bus = (void *)instance->can_instance_;
+    *group_id = instance->tx_group_base_id_;
+
+    return true;
+}

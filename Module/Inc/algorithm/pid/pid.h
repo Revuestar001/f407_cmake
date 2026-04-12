@@ -18,7 +18,7 @@ typedef enum
 {
     ALGORITHM_PID_DIFFERENTIAL_METHOD_ERROR = 0, // 使用误差微分
     ALGORITHM_PID_DIFFERENTIAL_METHOD_ESTIMATE, // 使用测量值微分
-} algorithmPIDDifferentialMethod_t; // 微分方法
+} algorithmPIDDerivativeMethod_t; // 微分方法
 
 typedef uint64_t (*algorithmPIDGetAbsTimeUs_f)(void);
 
@@ -33,8 +33,8 @@ typedef struct algorithm_pid_config
     float output_lower_bound_;
 
     algorithmPIDIntegralMethod_t integral_method_;
-    algorithmPIDDifferentialMethod_t differential_method_;
-    filterOneOrderLPF_t *differential_filter_; // NULL 时不启用微分滤波
+    algorithmPIDDerivativeMethod_t derivative_method_;
+    filterOneOrderLPF_t *derivative_filter_; // NULL 时不启用微分滤波
 
     algorithmPIDGetAbsTimeUs_f get_time_us_callback_;
 } algorithmPIDConfig_t;
@@ -56,7 +56,7 @@ typedef struct algorithm_pid
     float error_last_; // 上次误差
 
     float integral_; // 积分项
-    float differential_; // 微分项
+    float derivative_; // 微分项
 
     float P_item_;
     float I_item_;
@@ -65,8 +65,8 @@ typedef struct algorithm_pid
     float PID_output_;
 
     algorithmPIDIntegralMethod_t integral_method_;
-    algorithmPIDDifferentialMethod_t differential_method_;
-    filterOneOrderLPF_t *differential_filter_; // NULL 时不启用微分滤波
+    algorithmPIDDerivativeMethod_t derivative_method_;
+    filterOneOrderLPF_t *derivative_filter_; // NULL 时不启用微分滤波
 
     algorithmPIDGetAbsTimeUs_f get_time_us_callback_;
     uint64_t timestamp_last_us_;

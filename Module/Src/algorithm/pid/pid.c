@@ -30,8 +30,8 @@ bool algorithmPIDInit(algorithmPID_t *instance, algorithmPIDConfig_t *config)
     instance->output_lower_bound_ = config->output_lower_bound_;
     instance->output_upper_bound_ = config->output_upper_bound_;
     instance->integral_method_ = config->integral_method_;
-    instance->differential_method_ = config->differential_method_;
-    instance->differential_filter_ = config->differential_filter_;
+    instance->derivative_method_ = config->derivative_method_;
+    instance->derivative_filter_ = config->derivative_filter_;
     instance->get_time_us_callback_ = config->get_time_us_callback_;
     instance->timestamp_last_us_ = instance->get_time_us_callback_();
     instance->dt_s_ = 0.0f;
@@ -95,35 +95,35 @@ static bool calculateDItem(algorithmPID_t *instance)
     // dt太小，本次不计算D项
     if (instance->dt_s_ < ALGORITHM_PID_DT_MIN_S) {
         // 清空残留的微分项，正常返回
-        instance->differential_ = 0.0f;
+        instance->derivative_ = 0.0f;
         instance->D_item_ = 0.0f;
         return true;
     }
 
-    float differential = instance->differential_;
+    float derivative = instance->derivative_;
 
-    switch (instance->differential_method_) {
+    switch (instance->derivative_method_) {
         case ALGORITHM_PID_DIFFERENTIAL_METHOD_ESTIMATE: // 对测量值微分
             // 在target不变时，d_err = (err - err_last) / dt = ((tar - est) - (tar - est_last)) / dt = (est_last - est) / dt
-            differential = (instance->estimate_last_ - instance->estimate_) / instance->dt_s_;
+            derivative = (instance->estimate_last_ - instance->estimate_) / instance->dt_s_;
             break;
         case ALGORITHM_PID_DIFFERENTIAL_METHOD_ERROR: // 默认对误差微分
         default:
-            differential = (instance->error_ - instance->error_last_) / instance->dt_s_;
+            derivative = (instance->error_ - instance->error_last_) / instance->dt_s_;
             break;
     }
 
     // 微分滤波
-    if (instance->differential_filter_ != NULL) {
-        if (filterOneOrderLPFUpdate(instance->differential_filter_, differential, &differential) == false) {
+    if (instance->derivative_filter_ != NULL) {
+        if (filterOneOrderLPFUpdate(instance->derivative_filter_, derivative, &derivative) == false) {
             // 一般滤波update函数返回false是滤波器未初始化 或者 滤波器内部时间戳异常
             // 滤波器实例指针不为空，说明需要滤波，如果滤波失败就认为本次D项计算失败
             return false;
         }
     }
 
-    instance->differential_ = differential;
-    instance->D_item_ = instance->k_D_ * instance->differential_;
+    instance->derivative_ = derivative;
+    instance->D_item_ = instance->k_D_ * instance->derivative_;
 
     return true;
 }
@@ -160,7 +160,7 @@ bool algorithmPIDUpdate(algorithmPID_t *instance, float target, float estimate)
     calculateIItem(instance);
     if (calculateDItem(instance) == false) {
         // D项计算失败，降级
-        instance->differential_ = 0.0f;
+        instance->derivative_ = 0.0f;
         instance->D_item_ = 0.0f;
     }
     
@@ -181,7 +181,7 @@ bool algorithmPIDReset(algorithmPID_t *instance)
     }
 
     instance->integral_ = 0.0f;
-    instance->differential_ = 0.0f;
+    instance->derivative_ = 0.0f;
     instance->P_item_ = 0.0f;
     instance->I_item_ = 0.0f;
     instance->D_item_ = 0.0f;

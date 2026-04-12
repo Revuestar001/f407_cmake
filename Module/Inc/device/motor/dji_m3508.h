@@ -52,3 +52,5 @@ motorStatus_e motorDJIM3508GroupSendByMotorInstance(const motorDJIM3508Instance_
 motorStatus_e motorDJIM3508UpdateFeedbackData(motorDJIM3508Instance_t *instance);
 // 获取反馈数据
 motorStatus_e motorDJIM3508GetFeedbackData(motorDJIM3508Instance_t *instance, motorFeedBackData_t *data_out);
+// 获取该电机所在的group信息
+bool motorDJIM3508GetCommitGroup(motorDJIM3508Instance_t *instance, const void **commit_bus, uint32_t *group_id);
