@@ -57,6 +57,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/util/ring_buffer.c
     Module/Src/protocol/sbus.c
     Module/Src/rc_mapper/rc_mapper.c
+    Module/Src/motor_actuator/motor_actuator.c
     Module/Src/device/imu/bmi088.c
     Module/Src/device/magnetometer/ist8310.c
     Module/Src/device/motor/dji_m3508.c
@@ -66,6 +67,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/algorithm/math/angle.c
     Module/Src/algorithm/math/general_math.c
     Module/Src/algorithm/eskf/error_state_kalman_filter.c
+    Module/Src/algorithm/pid/pid.c
+    Module/Src/algorithm/filter/1st_order_lp_filter.c
 
     Application/Src/remote_control/app_remote_control.c
     Application/Src/imu/app_imu.c
@@ -87,11 +90,14 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/util/
     Module/Inc/protocol/
     Module/Inc/rc_mapper/
+    Module/Inc/motor_actuator/
     Module/Inc/device/imu/
     Module/Inc/device/magnetometer/
     Module/Inc/device/motor/
     Module/Inc/algorithm/math/
     Module/Inc/algorithm/eskf/
+    Module/Inc/algorithm/pid/
+    Module/Inc/algorithm/filter/
 
     Application/Inc/remote_control/
     Application/Inc/imu/
