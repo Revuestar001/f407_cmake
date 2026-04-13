@@ -77,7 +77,7 @@ typedef struct algorithm_pid
     bool is_first_update_;
 } algorithmPID_t;
 
-bool algorithmPIDInit(algorithmPID_t *instance, algorithmPIDConfig_t *config);
+bool algorithmPIDInit(algorithmPID_t *instance, const algorithmPIDConfig_t *config);
 bool algorithmPIDUpdate(algorithmPID_t *instance, float target, float estimate);
 // 未初始化不允许reset
 bool algorithmPIDReset(algorithmPID_t *instance);

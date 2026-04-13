@@ -6,7 +6,7 @@
 #include "general_math.h"
 #include "1st_order_lp_filter.h"
 
-bool algorithmPIDInit(algorithmPID_t *instance, algorithmPIDConfig_t *config)
+bool algorithmPIDInit(algorithmPID_t *instance, const algorithmPIDConfig_t *config)
 {
     if (instance == NULL || config == NULL) {
         return false;

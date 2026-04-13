@@ -1,7 +1,6 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include "dji_m3508.h"
 #include "motor_actuator.h"
 #include "motor_def.h"
 #include "pid.h"
@@ -19,13 +18,16 @@ static bool checkControlLoopValid(moduleMotorActuatorControlLoop_e ctrl_loop)
     }
 }
 
-bool moduleMotorActuatorInit(moduleMotorActuator_t *instance, moduleMotorActuatorConfig_t *config)
+bool moduleMotorActuatorInit(moduleMotorActuator_t *instance, const moduleMotorActuatorConfig_t *config)
 {
     if (instance == NULL || config == NULL) {
         return false;
     }
 
-    if (config->motor_instance_ == NULL) {
+    if (config->motor_instance_ == NULL || 
+        config->command_ops_ == NULL || 
+        config->feedback_source_ == NULL || 
+        config->feedback_ops_ == NULL) {
         return false;
     }
 
@@ -40,8 +42,14 @@ bool moduleMotorActuatorInit(moduleMotorActuator_t *instance, moduleMotorActuato
 
     memset(instance, 0, sizeof(moduleMotorActuator_t));
 
+    // 绑定电机和反馈源
     instance->motor_instance_ = config->motor_instance_; // motor_instance_ 由 app 预先创建，actuator 只绑定并使用，不拥有其生命周期
-    if (motorDJIM3508GetCommitGroup(instance->motor_instance_, &instance->commit_group_.bus_, &instance->commit_group_.group_id_) == false) {
+    instance->feedback_source_ = config->feedback_source_;
+    // 绑定虚函数表,直接指针赋值
+    instance->command_ops_ = config->command_ops_;
+    instance->feedback_ops_ = config->feedback_ops_;
+
+    if (instance->command_ops_->get_commit_group_(instance->motor_instance_, &instance->commit_group_) == false) {
         return false;
     }
 
@@ -72,7 +80,7 @@ bool moduleMotorActuatorEnableMotor(moduleMotorActuator_t *instance)
         return false;
     }
 
-    if (motorDJIM3508SetWorkStatus(instance->motor_instance_, MOTOR_WORK_STATUS_ENABLE) == false) {
+    if (instance->command_ops_->set_work_status_(instance->motor_instance_, MOTOR_WORK_STATUS_ENABLE) == false) {
         return false;
     }
 
@@ -87,12 +95,13 @@ bool moduleMotorActuatorDisableMotor(moduleMotorActuator_t *instance)
         return false;
     }
 
-    if (motorDJIM3508SetWorkStatus(instance->motor_instance_, MOTOR_WORK_STATUS_DISABLE) == false) {
+    if (instance->command_ops_->set_work_status_(instance->motor_instance_, MOTOR_WORK_STATUS_DISABLE) == false) {
         return false;
     }
 
     // 清空指令值
-    if (motorDJIM3508SetCurrentRef(instance->motor_instance_, 0.0f) == false) {
+    // 这里只清空了电流指令！！要改！！
+    if (instance->command_ops_->set_effort_ref_(instance->motor_instance_, 0.0f) == false) {
         return false;
     }
 
@@ -126,12 +135,12 @@ motorStatus_e moduleMotorActuatorUpdate(moduleMotorActuator_t *instance, float c
     motorStatus_e motor_status;
 
     motorFeedBackData_t fb_data;
-    motor_status = motorDJIM3508UpdateFeedbackData(instance->motor_instance_);
+    motor_status = instance->feedback_ops_->update_feedback_(instance->feedback_source_);
     if (motor_status == MOTOR_ERROR) {
         return motor_status;
     }
     // 允许在没有新反馈数据的时候，继续计算控制指令
-    motor_status = motorDJIM3508GetFeedbackData(instance->motor_instance_, &fb_data);
+    motor_status = instance->feedback_ops_->get_feedback_(instance->feedback_source_, &fb_data);
     if (motor_status != MOTOR_OK && motor_status != MOTOR_NO_NEW_DATA) {
         return motor_status;
     }
@@ -155,7 +164,8 @@ motorStatus_e moduleMotorActuatorUpdate(moduleMotorActuator_t *instance, float c
         pid_out = control_target;
     }
 
-    if (motorDJIM3508SetCurrentRef(instance->motor_instance_, pid_out) == false) {
+    // 这里只设置了电流指令！！要改！！
+    if (instance->command_ops_->set_effort_ref_(instance->motor_instance_, pid_out) == false) {
         return MOTOR_ERROR;
     }
 

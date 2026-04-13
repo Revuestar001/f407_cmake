@@ -3,7 +3,6 @@
 #include <stdint.h>
 
 #include "pid.h"
-#include "dji_m3508.h"
 #include "motor_def.h"
 
 typedef enum
@@ -27,9 +26,32 @@ typedef struct module_motor_actuator_commit_group
     uint32_t group_id_; // group的id，用于表示这个电机驱动器所在的group
 } moduleMotorActuatorCommitGroup_t; // 用于存储在同一个控制报文内(同一个组)的电机驱动器信息
 
+typedef struct module_motor_actuator_command_ops
+{
+    bool (*set_effort_ref_)(void *motor, float effort_ref);
+    bool (*set_velocity_ref_)(void *motor, float velocity_ref);
+    bool (*set_position_ref_)(void *motor, float position_ref);
+
+    bool (*set_work_status_)(void *motor, motorWorkStatus_e work_status);
+
+    motorStatus_e (*commit_command_)(const void *motor); // 请注意，按组发送指令的电机不支持commit
+
+    bool (*get_commit_group_)(void *motor, moduleMotorActuatorCommitGroup_t *group_out);
+} moduleMotorActuatorCommandOps_t; // 指令虚函数表
+
+typedef struct module_motor_actuator_feedback_ops
+{
+    motorStatus_e (*update_feedback_)(void *source);
+    motorStatus_e (*get_feedback_)(void *source, motorFeedBackData_t *feedback_out);
+} moduleMotorActuatorFeedbackOps_t; // 反馈虚函数表
+
 typedef struct module_motor_actuator_config
 {
-    motorDJIM3508Instance_t *motor_instance_; // 请注意，直接写出具体电机实例会使得这个模块无法适配多类型电机，之后要上oop!!!
+    void *motor_instance_; 
+    const moduleMotorActuatorCommandOps_t *command_ops_;
+
+    void *feedback_source_;
+    const moduleMotorActuatorFeedbackOps_t *feedback_ops_;
 
     algorithmPIDConfig_t angle_pid_config_;
     algorithmPIDConfig_t angular_velocity_pid_config_;
@@ -40,8 +62,12 @@ typedef struct module_motor_actuator_config
 
 typedef struct module_motor_actuator
 {
-    motorDJIM3508Instance_t *motor_instance_; // 请注意，直接写出具体电机实例会使得这个模块无法适配多类型电机，之后要上oop!!!
+    void *motor_instance_; 
+    const moduleMotorActuatorCommandOps_t *command_ops_;
     moduleMotorActuatorCommitGroup_t commit_group_;
+
+    void *feedback_source_;
+    const moduleMotorActuatorFeedbackOps_t *feedback_ops_;
 
     algorithmPID_t angle_pid_;
     algorithmPID_t angular_velocity_pid_;
@@ -55,7 +81,7 @@ typedef struct module_motor_actuator
 } moduleMotorActuator_t;
 
 // 初始化电机驱动器，只绑定一个电机
-bool moduleMotorActuatorInit(moduleMotorActuator_t *instance, moduleMotorActuatorConfig_t *config);
+bool moduleMotorActuatorInit(moduleMotorActuator_t *instance, const moduleMotorActuatorConfig_t *config);
 // 开启电机控制
 bool moduleMotorActuatorEnableMotor(moduleMotorActuator_t *instance);
 // 关闭电机控制并重置pid，实际上只是指令为0

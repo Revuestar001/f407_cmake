@@ -59,6 +59,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/rc_mapper/rc_mapper.c
     Module/Src/motor_actuator/motor_actuator.c
     Module/Src/motor_actuator/motor_actuator_group.c
+    Module/Src/motor_actuator/motor_actuator_dji_adapter.c
     Module/Src/device/imu/bmi088.c
     Module/Src/device/magnetometer/ist8310.c
     Module/Src/device/motor/dji_m3508.c

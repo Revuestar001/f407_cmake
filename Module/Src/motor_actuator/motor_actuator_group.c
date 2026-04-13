@@ -4,7 +4,6 @@
 
 #include "motor_actuator_group.h"
 #include "motor_actuator.h"
-#include "dji_m3508.h"
 #include "motor_def.h"
 
 // true表示两个commit group相同，两个null也算相同
@@ -23,9 +22,13 @@ static bool compareCommitGroup(const moduleMotorActuatorCommitGroup_t *group1, c
     return true;
 }
 
-bool moduleMotorActuatorGroupInit(moduleMotorActuatorGroup_t *instance, moduleMotorActuator_t *motors[MODULE_MOTOR_ACTUATOR_MAX_MOTOR_ONE_GROUP])
+bool moduleMotorActuatorGroupInit(moduleMotorActuatorGroup_t *instance, moduleMotorActuator_t *motors[MODULE_MOTOR_ACTUATOR_MAX_MOTOR_ONE_GROUP], const moduleMotorActuatorGroupCommandOps_t *ops)
 {
     if (instance == NULL || motors == NULL) {
+        return false;
+    }
+
+    if (ops == NULL) {
         return false;
     }
 
@@ -60,6 +63,8 @@ bool moduleMotorActuatorGroupInit(moduleMotorActuatorGroup_t *instance, moduleMo
         return false;
     }
 
+    instance->group_command_ops_ = ops;
+
     return true;
 } 
 
@@ -73,7 +78,7 @@ motorStatus_e moduleMotorActuatorGroupCommit(moduleMotorActuatorGroup_t *instanc
         if (instance->motor_instance_group[i] != NULL) {
             // 这个返回值我觉得比较重要，但是可能这个函数不要用bool比较好
             motorStatus_e motor_status;
-            motor_status = motorDJIM3508GroupSendByMotorInstance(instance->motor_instance_group[i]->motor_instance_);
+            motor_status = instance->group_command_ops_->group_commit_(instance->motor_instance_group[i]->motor_instance_);
             if (motor_status != MOTOR_OK) {
                 return motor_status;
             }
