@@ -27,6 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "app_remote_control.h"
 #include "app_ins.h"
+#include "app_chassis.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,6 +63,13 @@ const osThreadAttr_t insTask_attributes = {
 volatile UBaseType_t ins_task_stack_high_water_mark_ = 0;
 volatile UBaseType_t ins_task_stack_high_water_mark_min_ = 0xFFFFFFFFU;
 
+osThreadId_t appChassisTaskHandle;
+const osThreadAttr_t chassisTask_attributes = {
+  .name = "chassisTask_",
+  .stack_size = 256 * 8,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -75,6 +83,7 @@ const osThreadAttr_t defaultTask_attributes = {
 /* USER CODE BEGIN FunctionPrototypes */
 void StartRemoteControlTask(void *argument);
 void StartINSTask(void *argument);
+void StartChassisTask(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -114,7 +123,8 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   remoteControlTaskHandle = osThreadNew(StartRemoteControlTask, NULL, &remoteControlTask_attributes);
-  appINSTaskHandle = osThreadNew(StartINSTask, NULL, &insTask_attributes);
+  // appINSTaskHandle = osThreadNew(StartINSTask, NULL, &insTask_attributes);
+  appChassisTaskHandle = osThreadNew(StartChassisTask, NULL, &chassisTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -151,6 +161,11 @@ void StartRemoteControlTask(void *argument)
 void StartINSTask(void *argument)
 {
   appINSTaskEntry(argument);
+}
+
+void StartChassisTask(void *argument)
+{
+  appChassisTaskEntry(argument);
 }
 /* USER CODE END Application */
 

@@ -75,6 +75,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Src/remote_control/app_remote_control.c
     Application/Src/imu/app_imu.c
     Application/Src/ins/app_ins.c
+    Application/Src/chassis/app_chassis.c
 )
 
 # Add include paths
@@ -104,6 +105,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Inc/remote_control/
     Application/Inc/imu/
     Application/Inc/ins/
+    Application/Inc/chassis/
     Application/Inc/
 )
 
