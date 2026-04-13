@@ -77,6 +77,9 @@ typedef struct module_motor_actuator_config
     moduleMotorActuatorControlLoop_e control_loop_;
     moduleMotorActuatorCommandType_e command_type_;
     moduleMotorActuatorFeedbackSide_e feedback_side_;
+
+    float command_sign_; // actuator坐标系到电机命令坐标系，>=0表示同向，<0表示反向
+    float feedback_sign_; // 反馈源坐标系到actuator坐标系，>=0表示同向，<0表示反向
 } moduleMotorActuatorConfig_t;
 
 typedef struct module_motor_actuator
@@ -95,6 +98,9 @@ typedef struct module_motor_actuator
     moduleMotorActuatorCommandType_e command_type_;
     moduleMotorActuatorFeedbackSide_e feedback_side_;
 
+    float command_sign_;
+    float feedback_sign_;
+
     motorWorkStatus_e work_status_;
 
     bool is_initialized_;
@@ -110,3 +116,5 @@ bool moduleMotorActuatorDisableMotor(moduleMotorActuator_t *instance);
 motorStatus_e moduleMotorActuatorUpdateCommand(moduleMotorActuator_t *instance, const moduleMotorActuatorCommandRef_t *control_ref);
 // 更新单个电机的控制指令值，不负责发送指令，请尽量不要使用这个接口
 motorStatus_e moduleMotorActuatorUpdate(moduleMotorActuator_t *instance, float control_target);
+// 获取反馈数据，已转到actuator系下
+motorStatus_e moduleMotorActuatorGetFeedbackData(moduleMotorActuator_t *instance, motorFeedBackData_t *data_out);

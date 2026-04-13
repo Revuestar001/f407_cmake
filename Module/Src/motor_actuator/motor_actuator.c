@@ -87,21 +87,32 @@ static bool checkFeedbackOpsValid(moduleMotorActuatorControlLoop_e ctrl_loop, vo
            ops->get_feedback_ != NULL;
 }
 
+static float normalizeSign(float sign)
+{
+    return sign < 0.0f ? -1.0f : 1.0f;
+}
+
 static bool setCommandRef(moduleMotorActuator_t *instance, const moduleMotorActuatorCommandRef_t *control_ref)
 {
     if (instance == NULL || instance->command_ops_ == NULL || control_ref == NULL) {
         return false;
     }
 
+    // 使用command_sign_把actuator坐标系下的命令转到电机坐标系
     switch (instance->command_type_) {
         case MODULE_MOTOR_ACTUATOR_CMD_TYPE_EFFORT:
-            return instance->command_ops_->set_effort_ref_(instance->motor_instance_, control_ref->effort_ref_);
+            return instance->command_ops_->set_effort_ref_(instance->motor_instance_, instance->command_sign_ * control_ref->effort_ref_);
         case MODULE_MOTOR_ACTUATOR_CMD_TYPE_VELOCITY:
-            return instance->command_ops_->set_velocity_ref_(instance->motor_instance_, control_ref->velocity_ref_rads_);
+            return instance->command_ops_->set_velocity_ref_(instance->motor_instance_, instance->command_sign_ * control_ref->velocity_ref_rads_);
         case MODULE_MOTOR_ACTUATOR_CMD_TYPE_POSITION:
-            return instance->command_ops_->set_position_ref_(instance->motor_instance_, control_ref->position_ref_rad_);
-        case MODULE_MOTOR_ACTUATOR_CMD_TYPE_MIT:
-            return instance->command_ops_->set_mit_ref_(instance->motor_instance_, control_ref);
+            return instance->command_ops_->set_position_ref_(instance->motor_instance_, instance->command_sign_ * control_ref->position_ref_rad_);
+        case MODULE_MOTOR_ACTUATOR_CMD_TYPE_MIT: {
+            moduleMotorActuatorCommandRef_t signed_ref = *control_ref;
+            signed_ref.position_ref_rad_ *= instance->command_sign_;
+            signed_ref.velocity_ref_rads_ *= instance->command_sign_;
+            signed_ref.effort_ref_ *= instance->command_sign_;
+            return instance->command_ops_->set_mit_ref_(instance->motor_instance_, &signed_ref);
+        }
         default:
             return false;
     }
@@ -176,6 +187,8 @@ bool moduleMotorActuatorInit(moduleMotorActuator_t *instance, const moduleMotorA
     instance->control_loop_ = config->control_loop_;
     instance->command_type_ = config->command_type_;
     instance->feedback_side_ = config->feedback_side_;
+    instance->command_sign_ = normalizeSign(config->command_sign_);
+    instance->feedback_sign_ = normalizeSign(config->feedback_sign_);
     instance->work_status_ = MOTOR_WORK_STATUS_DISABLE;
 
     if ((config->control_loop_ & MODULE_MOTOR_ACTUATOR_CTRL_LOOP_ANGLE) != 0U) {
@@ -277,13 +290,14 @@ motorStatus_e moduleMotorActuatorUpdateCommand(moduleMotorActuator_t *instance, 
     float position_estimate = 0.0f;
     float velocity_estimate = 0.0f;
     switch (instance->feedback_side_) {
+        // 使用feedback_sign_把反馈源坐标系下的反馈数据转到actuator坐标系
         case MODULE_MOTOR_ACTUATOR_FEEDBACK_SIDE_OUTPUT:
-            position_estimate = fb_data.angle_fb_total_reduced_rad_;
-            velocity_estimate = fb_data.angular_velocity_fb_reduced_rads_;
+            position_estimate = instance->feedback_sign_ * fb_data.angle_fb_total_reduced_rad_;
+            velocity_estimate = instance->feedback_sign_ * fb_data.angular_velocity_fb_reduced_rads_;
             break;
         case MODULE_MOTOR_ACTUATOR_FEEDBACK_SIDE_ROTOR:
-            position_estimate = fb_data.angle_fb_total_rad_;
-            velocity_estimate = fb_data.angular_velocity_fb_rads_;
+            position_estimate = instance->feedback_sign_ * fb_data.angle_fb_total_rad_;
+            velocity_estimate = instance->feedback_sign_ * fb_data.angular_velocity_fb_rads_;
             break;
         default:
             return MOTOR_ERROR;
@@ -308,7 +322,8 @@ motorStatus_e moduleMotorActuatorUpdateCommand(moduleMotorActuator_t *instance, 
 
     if (instance->control_loop_ == MODULE_MOTOR_ACTUATOR_CTRL_LOOP_ANGLE) {
         // control_ref的velocity_ref_rads_字段作为前馈
-        if (instance->command_ops_->set_velocity_ref_(instance->motor_instance_, pid_out + control_ref->velocity_ref_rads_) == false) {
+        // 使用command_sign_把actuator坐标系下的命令转到电机坐标系
+        if (instance->command_ops_->set_velocity_ref_(instance->motor_instance_, instance->command_sign_ * (pid_out + control_ref->velocity_ref_rads_)) == false) {
             return MOTOR_ERROR;
         }
         return MOTOR_OK;
@@ -316,7 +331,8 @@ motorStatus_e moduleMotorActuatorUpdateCommand(moduleMotorActuator_t *instance, 
 
     // 只要不是单位置环pid，都输出effort指令
     // control_ref的effort_ref_字段作为前馈
-    if (instance->command_ops_->set_effort_ref_(instance->motor_instance_, pid_out + control_ref->effort_ref_) == false) {
+    // 使用command_sign_把actuator坐标系下的命令转到电机坐标系
+    if (instance->command_ops_->set_effort_ref_(instance->motor_instance_, instance->command_sign_ * (pid_out + control_ref->effort_ref_)) == false) {
         return MOTOR_ERROR;
     }
 
@@ -354,4 +370,33 @@ motorStatus_e moduleMotorActuatorUpdate(moduleMotorActuator_t *instance, float c
     }
 
     return moduleMotorActuatorUpdateCommand(instance, &control_ref);
+}
+
+motorStatus_e moduleMotorActuatorGetFeedbackData(moduleMotorActuator_t *instance, motorFeedBackData_t *data_out)
+{
+    if (instance == NULL || data_out == NULL || instance->is_initialized_ == false) {
+        return MOTOR_ERROR;
+    }
+
+    if (instance->feedback_source_ == NULL || instance->feedback_ops_ == NULL || instance->feedback_ops_->get_feedback_ == NULL) {
+        return MOTOR_ERROR;
+    }
+
+    motorStatus_e motor_status;
+    motorFeedBackData_t fb_data;
+    motor_status = instance->feedback_ops_->get_feedback_(instance->feedback_source_, &fb_data);
+    if (motor_status != MOTOR_OK) {
+        return motor_status;
+    }
+
+    // 使用feedback_sign_把反馈源坐标系下的反馈数据转到actuator坐标系
+    fb_data.angle_fb_rad_ *= instance->feedback_sign_;
+    fb_data.angle_fb_total_rad_ *= instance->feedback_sign_;
+    fb_data.angle_fb_total_reduced_rad_ *= instance->feedback_sign_;
+    fb_data.angular_velocity_fb_rads_ *= instance->feedback_sign_;
+    fb_data.angular_velocity_fb_reduced_rads_ *= instance->feedback_sign_;
+
+    *data_out = fb_data;
+
+    return MOTOR_OK;
 }
