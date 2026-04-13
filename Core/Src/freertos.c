@@ -123,7 +123,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   remoteControlTaskHandle = osThreadNew(StartRemoteControlTask, NULL, &remoteControlTask_attributes);
-  // appINSTaskHandle = osThreadNew(StartINSTask, NULL, &insTask_attributes);
+  appINSTaskHandle = osThreadNew(StartINSTask, NULL, &insTask_attributes);
   appChassisTaskHandle = osThreadNew(StartChassisTask, NULL, &chassisTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
