@@ -752,9 +752,15 @@ bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGOR
     // 计算卡尔曼增益K
     //
     // K_accel = P_priori * H_accel^T * S_accel^-1
+    // CMSIS-DSP 的 arm_mat_inverse_f32 会修改输入矩阵，因此这里必须先拷贝一份原始 S_accel，
+    // 避免把创新协方差本体改成单位阵，导致调试观测和 Joseph 协方差更新都拿到错误的 S。
+    mathMatrix_t S_accel_for_inverse;
+    mathMatrixInit(&S_accel_for_inverse, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, instance->temp_mat_3x3_5_data_);
+    memcpy(instance->temp_mat_3x3_5_data_, instance->S_accel_data_, sizeof(instance->S_accel_data_));
+
     mathMatrix_t S_accel_inv;
     mathMatrixInit(&S_accel_inv, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, instance->temp_mat_3x3_4_data_);
-    if (mathMatrixInverse(&instance->S_accel_, &S_accel_inv) != ARM_MATH_SUCCESS) {
+    if (mathMatrixInverse(&S_accel_for_inverse, &S_accel_inv) != ARM_MATH_SUCCESS) {
         return false;
     }
     // 创新卡方门限不通过，本轮不使用accel更新，但不视为滤波失败
@@ -891,9 +897,15 @@ bool algorithmESKFMagUpdate(algorithmESKF_t *instance, float measurement[ALGORIT
     // 计算卡尔曼增益K
     //
     // K_mag = P_priori * H_mag^T * S_mag^-1
+    // CMSIS-DSP 的 arm_mat_inverse_f32 会修改输入矩阵，因此这里必须先拷贝一份原始 S_mag，
+    // 避免把创新协方差本体改成单位阵，导致调试观测和 Joseph 协方差更新都拿到错误的 S。
+    mathMatrix_t S_mag_for_inverse;
+    mathMatrixInit(&S_mag_for_inverse, ALGORITHM_ESKF_MEASURE_MAG_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, instance->temp_mat_3x3_5_data_);
+    memcpy(instance->temp_mat_3x3_5_data_, instance->S_mag_data_, sizeof(instance->S_mag_data_));
+
     mathMatrix_t S_mag_inv;
     mathMatrixInit(&S_mag_inv, ALGORITHM_ESKF_MEASURE_MAG_DIM, ALGORITHM_ESKF_MEASURE_MAG_DIM, instance->temp_mat_3x3_4_data_);
-    if (mathMatrixInverse(&instance->S_mag_, &S_mag_inv) != ARM_MATH_SUCCESS) {
+    if (mathMatrixInverse(&S_mag_for_inverse, &S_mag_inv) != ARM_MATH_SUCCESS) {
         return false;
     }
     // 创新卡方门限不通过，本轮不使用mag更新，但不视为滤波失败
