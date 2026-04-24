@@ -29,6 +29,8 @@ typedef struct app_remote_control_command
 appRemoteControlState_e appRemoteControlGetState(void);
 // 一般直接获取指令值即可
 appRemoteControlCommand_t appRemoteControlGetCommand(void);
+// 通过任务间队列接收最新指令，timeout_tick 为 FreeRTOS tick
+bool appRemoteControlReceiveCommand(appRemoteControlCommand_t *command_out, uint32_t timeout_tick);
 
 // 任务循环
 void appRemoteControlTaskEntry(void *argument);

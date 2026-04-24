@@ -1,4 +1,5 @@
 ﻿#include "FreeRTOS.h"
+#include "queue.h"
 #include "stream_buffer.h"
 #include "task.h"
 
@@ -22,6 +23,7 @@ typedef struct app_remote_control
 {
     bspUARTInstance_t *uart_instance_;
     StreamBufferHandle_t stream_buffer_handle_;
+    QueueHandle_t command_queue_handle_;
 
     // 统计丢失数据次数和字节数
     volatile uint32_t stream_buffer_drop_count_;
@@ -33,16 +35,21 @@ typedef struct app_remote_control
 } appRemoteControlInstance_t;
 
 static appRemoteControlInstance_t app_rc_instance_ = {0};
+static appRemoteControlCommand_t appRemoteControlBuildCommand(const appRemoteControlOutput_t *output);
+static void appRemoteControlPublishCommand(const appRemoteControlOutput_t *output);
 
 // stream buffer
 // 请注意，stream buffer的大小+2(stream buffer实际容量)不能比底层bsp_uart的DMA缓冲区小，否则会造成字节丢失
 static uint8_t stream_buffer_[BSP_UART_RX_BUFFER_SIZE * 2 + 2U];
 static StaticStreamBuffer_t stream_buffer_struct_;
+static uint8_t command_queue_storage_[sizeof(appRemoteControlCommand_t)];
+static StaticQueue_t command_queue_struct_;
 
 #define UPDATE_TEMP_BUFFER_SIZE PROTOCOL_SBUS_FRAME_SIZE
 #define APP_REMOTE_CONTROL_REINIT_DELAY_MS 100U
 #define APP_REMOTE_CONTROL_MAX_UPDATE_WAIT_MS 10U // 最低更新频率
 #define APP_REMOTE_CONTROL_LOST_TIMEOUT_MS 50U // 认为RC LOST的超时时间，不要太小可能导致误判，请注意这个是指解析到两个完整25字节有效SBUS帧之间的时间，不是指frame_lost_flag
+#define APP_REMOTE_CONTROL_COMMAND_QUEUE_LENGTH 1U
 
 static appRemoteControlState_e appRemoteControlGetStateFromSBUSFrame(const protocolSBUSDataFrame_t *sbus_frame)
 {
@@ -190,8 +197,17 @@ static bool appRemoteControlInit(void)
         return false;
     }
 
+    app_rc_instance_.command_queue_handle_ = xQueueCreateStatic(APP_REMOTE_CONTROL_COMMAND_QUEUE_LENGTH,
+                                                                sizeof(appRemoteControlCommand_t),
+                                                                command_queue_storage_,
+                                                                &command_queue_struct_);
+    if (app_rc_instance_.command_queue_handle_ == NULL) {
+        return false;
+    }
+
     protocolSBUSPraserInit(&app_rc_instance_.sbus_praser_);
     moduleRCMapperInit(&app_rc_instance_.output_.rc_mapper_);
+    appRemoteControlPublishCommand(&app_rc_instance_.output_);
 
     bspUARTRxEventCallbackRegister(app_rc_instance_.uart_instance_,
                                    (void *)&app_rc_instance_,
@@ -250,6 +266,7 @@ static bool appRemoteControlUpdate(TickType_t timeout_tick)
 
     if (received_valid_frame == true) {
         appRemoteControlUpdateOutput(&output);
+        appRemoteControlPublishCommand(&output);
         return true;
     }
 
@@ -257,6 +274,7 @@ static bool appRemoteControlUpdate(TickType_t timeout_tick)
         appRemoteControlIsFrameExpired(pdMS_TO_TICKS(APP_REMOTE_CONTROL_LOST_TIMEOUT_MS)) == true) {
         appRemoteControlSetOutputLost(&output);
         appRemoteControlUpdateOutput(&output);
+        appRemoteControlPublishCommand(&output);
     }
 
     return false;
@@ -315,10 +333,31 @@ static appRemoteControlCommand_t appRemoteControlBuildCommand(const appRemoteCon
     return command;
 }
 
+static void appRemoteControlPublishCommand(const appRemoteControlOutput_t *output)
+{
+    if (output == NULL || app_rc_instance_.command_queue_handle_ == NULL) {
+        return;
+    }
+
+    appRemoteControlCommand_t command = appRemoteControlBuildCommand(output);
+    (void)xQueueOverwrite(app_rc_instance_.command_queue_handle_, &command);
+}
+
 appRemoteControlCommand_t appRemoteControlGetCommand(void)
 {
     appRemoteControlOutput_t output = appRemoteControlGetOutput();
     return appRemoteControlBuildCommand(&output);
+}
+
+bool appRemoteControlReceiveCommand(appRemoteControlCommand_t *command_out, uint32_t timeout_tick)
+{
+    if (command_out == NULL || app_rc_instance_.command_queue_handle_ == NULL) {
+        return false;
+    }
+
+    return xQueueReceive(app_rc_instance_.command_queue_handle_,
+                         command_out,
+                         (TickType_t)timeout_tick) == pdPASS;
 }
 
 void appRemoteControlTaskEntry(void *argument)
@@ -335,4 +374,5 @@ void appRemoteControlTaskEntry(void *argument)
     (void)appRemoteControlUpdate(pdMS_TO_TICKS(APP_REMOTE_CONTROL_MAX_UPDATE_WAIT_MS));
   }
 }
+
 

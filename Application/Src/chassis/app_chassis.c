@@ -14,7 +14,9 @@
 #include "motor_actuator.h"
 #include "motor_actuator_group.h"
 #include "pid.h"
+#include "general_math.h"
 #include "motor_actuator_dji_adapter.h"
+#include "app_remote_control.h"
 #include "app_chassis.h"
 #include "app_def.h"
 #include "user_def.h"
@@ -28,6 +30,50 @@ typedef struct app_chassis
 } appChassis_t;
 
 static appChassis_t app_chassis_ = {0};
+
+#define APP_CHASSIS_RC_STICK_MAX_ABS 1000.0f
+#define APP_CHASSIS_MAX_LINEAR_SPEED_REF_RADS 3.0f
+#define APP_CHASSIS_MAX_TURN_SPEED_REF_RADS 2.0f
+
+static float appChassisMapRCStickToSpeedRef(int16_t stick_value, float max_abs_speed_ref_rads)
+{
+    return ((float)stick_value / APP_CHASSIS_RC_STICK_MAX_ABS) * max_abs_speed_ref_rads;
+}
+
+static void appChassisBuildVelocityCommandFromRemoteControl(const appRemoteControlCommand_t *command,
+                                                            moduleMotorActuatorCommandRef_t *left_ref,
+                                                            moduleMotorActuatorCommandRef_t *right_ref)
+{
+    if (left_ref == NULL || right_ref == NULL) {
+        return;
+    }
+
+    memset(left_ref, 0, sizeof(*left_ref));
+    memset(right_ref, 0, sizeof(*right_ref));
+
+    if (command == NULL ||
+        command->state_ != APP_REMOTE_CONTROL_STATE_CONTROL ||
+        command->armed_ == false) {
+        return;
+    }
+
+    float linear_speed_ref_rads = appChassisMapRCStickToSpeedRef(command->linear_speed_,
+                                                                 APP_CHASSIS_MAX_LINEAR_SPEED_REF_RADS);
+    float turn_speed_ref_rads = appChassisMapRCStickToSpeedRef(command->angular_speed_,
+                                                               APP_CHASSIS_MAX_TURN_SPEED_REF_RADS);
+    float motor_left_speed_ref_rads = linear_speed_ref_rads - turn_speed_ref_rads;
+    float motor_right_speed_ref_rads = -(linear_speed_ref_rads + turn_speed_ref_rads);
+    float motor_speed_ref_limit_rads = APP_CHASSIS_MAX_LINEAR_SPEED_REF_RADS + APP_CHASSIS_MAX_TURN_SPEED_REF_RADS;
+
+    mathClampf(motor_left_speed_ref_rads,
+               -motor_speed_ref_limit_rads,
+               motor_speed_ref_limit_rads,
+               &left_ref->velocity_ref_rads_);
+    mathClampf(motor_right_speed_ref_rads,
+               -motor_speed_ref_limit_rads,
+               motor_speed_ref_limit_rads,
+               &right_ref->velocity_ref_rads_);
+}
 
 static bool appChassisInit(void)
 {
@@ -135,24 +181,31 @@ void appChassisTaskEntry(void *argument)
     while (moduleMotorActuatorEnableMotor(&app_chassis_.actuator_[1]) != true) {
         osDelay(pdMS_TO_TICKS(100));
     }
-    moduleMotorActuatorCommandRef_t ref = {
-        .effort_ref_ = 0.0f,
-        .velocity_ref_rads_ = 1.0f,
-        .position_ref_rad_ = 0.0f,
-        .mit_kp_ = 0.0f,
-        .mit_kd_ = 0.0f,
+    moduleMotorActuatorCommandRef_t left_ref = {0};
+    moduleMotorActuatorCommandRef_t right_ref = {0};
+    appRemoteControlCommand_t remote_control_command = {
+        .state_ = APP_REMOTE_CONTROL_STATE_LOST,
+        .armed_ = false,
+        .drive_mode_ = APP_REMOTE_CONTROL_DRIVE_MODE_MANUAL,
+        .linear_speed_ = 0,
+        .angular_speed_ = 0,
     };
 
     motorStatus_e motor_status;
 
     for (;;) {
-        ref.velocity_ref_rads_ = 1.0f;
-        motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[0], &ref);
+        appRemoteControlCommand_t command_new;
+        if (appRemoteControlReceiveCommand(&command_new, 0U) == true) {
+            remote_control_command = command_new;
+        }
+
+        appChassisBuildVelocityCommandFromRemoteControl(&remote_control_command, &left_ref, &right_ref);
+
+        motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[0], &left_ref);
         if (motor_status != MOTOR_OK) {
             app_chassis_.error_count_ ++;
         }
-        ref.velocity_ref_rads_ = -1.0f;
-        motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[1], &ref);
+        motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[1], &right_ref);
         if (motor_status != MOTOR_OK) {
             app_chassis_.error_count_ ++;
         }
@@ -161,8 +214,9 @@ void appChassisTaskEntry(void *argument)
         if (motor_status != MOTOR_OK) {
             app_chassis_.error_count_ ++;
         }
-        // ref.position_ref_rad_ += 0.01f * DEG_TO_RAD;
 
         osDelay(pdMS_TO_TICKS(1));
     }
 }
+
+
