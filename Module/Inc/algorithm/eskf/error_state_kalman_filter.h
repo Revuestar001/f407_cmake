@@ -15,7 +15,7 @@
 #define ALGORITHM_ESKF_IMU_SAMPLE_FREQUENCY 400.0f // imu近似采样频率，只能用于初始化！
 #define ALGORITHM_ESKF_R_ACCEL_SCALE_FACTOR 10.0f // 加速度测量噪声放大系数
 #define ALGORITHM_ESKF_MAG_SAMPLE_FREQUENCY 200.0f // mag近似采样频率，只能用于初始化！
-#define ALGORITHM_ESKF_R_MAG_SCALE_FACTOR 50.0f // 磁力计测量噪声放大系数
+#define ALGORITHM_ESKF_R_MAG_SCALE_FACTOR 20.0f // 磁力计测量噪声放大系数
 
 #define ALGORITHM_ESKF_ACCEL_NORM_GATE_RATIO 0.15f // accel模长门限，允许相对重力参考模长的偏差比例，*100%
 #define ALGORITHM_ESKF_CHI_SQUARE_1_DOF_90_PERCENT 2.706f
@@ -35,14 +35,12 @@
 
 typedef enum
 {
-    ALGORITHM_ESKF_NOMINAL_STATE_DIM = 10, // quat + bias_gyro + bias_accel
+    ALGORITHM_ESKF_NOMINAL_STATE_DIM = 7, // quat + bias_gyro
     ALGORITHM_ESKF_NOMINAL_STATE_QUAT_DIM = 4,
     ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM = 3,
-    ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM = 3,
-    ALGORITHM_ESKF_ERROR_STATE_DIM = 9, // small angle error + delta bias_gyro + delta bias_accel
+    ALGORITHM_ESKF_ERROR_STATE_DIM = 6, // small angle error + delta bias_gyro
     ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM = 3,
     ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM = 3,
-    ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM = 3,
     ALGORITHM_ESKF_MEASURE_GYRO_DIM = 3,
     ALGORITHM_ESKF_MEASURE_ACCEL_DIM = 3,
     ALGORITHM_ESKF_MEASURE_MAG_DIM = 3,
@@ -63,12 +61,10 @@ typedef struct eskf_init_params
 {
     mathQuaternion_t quat_init_;
     float gyro_bias_init_[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM];
-    float accel_bias_init_[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM];
 
-    // 初始化状态误差协方差，姿态误差方差、gyro bias方差、accel bias方差
+    // 初始化状态误差协方差，姿态误差方差、gyro bias方差
     float angle_error_variance_[ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM];
     float delta_bias_gyro_variance_[ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM];
-    float delta_bias_accel_variance_[ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM];
 
     // 重力参考向量,比力，N系下
     float gravity_ref_n_[ALGORITHM_ESKF_MEASURE_ACCEL_DIM];
@@ -87,7 +83,6 @@ typedef struct eskf_params
     // 过程噪声Q参数
     float gyro_noise_rads_sqrt_hz_; // gyro白噪声密度，rad/s/sqrt(Hz)，对应小角度误差传播
     float gyro_random_walk_rads2_sqrt_hz_; // gyro随机游走，rad/s2/sqrt(Hz)，对应delta bias_gyro 传播
-    float accel_random_walk_ms3_sqrt_hz_; // accel随机游走,m/s3/sqrt(Hz)，对应delta bias_accel 传播
 
     // 测量/观测噪声R参数
     float accel_noise_ms2_sqrt_hz_; // accel白噪声密度，m/s2/sqrt(Hz)，加速度计测量噪声
@@ -99,9 +94,7 @@ typedef struct eskf
     // 名义状态
     mathQuaternion_t nominal_state_quat_;
     mathMatrix_t nomial_state_bias_gyro_; 
-    mathMatrix_t nomial_state_bias_accel_;
     float nomial_state_bias_gyro_data_[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM];
-    float nomial_state_bias_accel_data_[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM];
 
     // 误差状态
     mathMatrix_t error_states_;

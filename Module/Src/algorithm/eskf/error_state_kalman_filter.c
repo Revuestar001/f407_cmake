@@ -21,7 +21,6 @@ static bool computeQDiscrete(algorithmESKF_t *instance, float dt)
     float val_angle_angle = instance->params_.gyro_noise_rads_sqrt_hz_ * instance->params_.gyro_noise_rads_sqrt_hz_ * dt + 
                             instance->params_.gyro_random_walk_rads2_sqrt_hz_ * instance->params_.gyro_random_walk_rads2_sqrt_hz_ * dt * dt * dt / 3.0f;
     float val_gyro_gyro = instance->params_.gyro_random_walk_rads2_sqrt_hz_ * instance->params_.gyro_random_walk_rads2_sqrt_hz_ * dt;
-    float val_accel_accel = instance->params_.accel_random_walk_ms3_sqrt_hz_ * instance->params_.accel_random_walk_ms3_sqrt_hz_ * dt;
     // 非对角对称
     float val_angle_gyro = -0.5f * instance->params_.gyro_random_walk_rads2_sqrt_hz_ * instance->params_.gyro_random_walk_rads2_sqrt_hz_ * dt * dt;
     mathMatrixSetZero(&instance->Q_);
@@ -38,22 +37,16 @@ static bool computeQDiscrete(algorithmESKF_t *instance, float dt)
                                 ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM, 
                                 val_gyro_gyro);
     mathMatrixSetBlockDiagScalar(&instance->Q_, 
-                                ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM + ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM, 
-                                ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM + ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM, 
-                                ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, 
-                                ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, 
-                                val_accel_accel);
-    mathMatrixSetBlockDiagScalar(&instance->Q_, 
                                 0U, 
                                 ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM, 
-                                ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, 
-                                ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, 
+                                ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM, 
+                                ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM, 
                                 val_angle_gyro);
     mathMatrixSetBlockDiagScalar(&instance->Q_, 
                                 ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM, 
                                 0U, 
-                                ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, 
-                                ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, 
+                                ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM, 
+                                ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM, 
                                 val_angle_gyro);
 
     return true;
@@ -435,11 +428,6 @@ static bool injectErrorToNominal(algorithmESKF_t *instance)
         instance->nomial_state_bias_gyro_data_[i] += instance->error_states_data_[ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM + i];
     }
 
-    // 注入误差，计算后验名义bias accel
-    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM; i ++) {
-        instance->nomial_state_bias_accel_data_[i] += instance->error_states_data_[ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM + ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM + i];
-    }
-
     return true;
 }
 
@@ -501,8 +489,6 @@ bool algorithmESKFInit(algorithmESKF_t *instance, algorithmESKFParams_t *params)
 
     // 初始化所有矩阵
     mathMatrixInit(&instance->nomial_state_bias_gyro_, ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM, 1U, instance->nomial_state_bias_gyro_data_);
-    mathMatrixInit(&instance->nomial_state_bias_accel_, ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM, 1U, instance->nomial_state_bias_accel_data_);
-    
     mathMatrixInit(&instance->error_states_, ALGORITHM_ESKF_ERROR_STATE_DIM, 1U, instance->error_states_data_);
 
     mathMatrixInit(&instance->P_, ALGORITHM_ESKF_ERROR_STATE_DIM, ALGORITHM_ESKF_ERROR_STATE_DIM, instance->P_data_);
@@ -528,13 +514,11 @@ bool algorithmESKFInit(algorithmESKF_t *instance, algorithmESKFParams_t *params)
         return false;
     }
     memcpy(instance->nomial_state_bias_gyro_data_, params->init_params_.gyro_bias_init_, ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM * sizeof(float));
-    memcpy(instance->nomial_state_bias_accel_data_, params->init_params_.accel_bias_init_, ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM * sizeof(float));
 
     // 设置初始状态误差协方差矩阵
     float p_diag_init[ALGORITHM_ESKF_ERROR_STATE_DIM];
     memcpy(p_diag_init, params->init_params_.angle_error_variance_, ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM * sizeof(float));
     memcpy(p_diag_init + ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM, params->init_params_.delta_bias_gyro_variance_, ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM * sizeof(float));
-    memcpy(p_diag_init + ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM + ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM, params->init_params_.delta_bias_accel_variance_, ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM * sizeof(float));
     if (mathMatrixSetDiag(&instance->P_, p_diag_init, ALGORITHM_ESKF_ERROR_STATE_DIM) == false) {
         return false;
     }
@@ -618,11 +602,7 @@ bool algorithmESKFGyroPredict(algorithmESKF_t *instance, float measurement[ALGOR
     }
     instance->nominal_state_quat_ = quat_priori;
 
-    // 计算名义状态传播后的 bias,这里其实就是保持不变，所以就不做操作了
-    // float gyro_bias_priori[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM];
-    // float accel_bias_priori[ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM];
-    // memcpy(gyro_bias_priori, instance->nomial_state_bias_gyro_data_, ALGORITHM_ESKF_NOMINAL_STATE_BIAS_GYRO_DIM * sizeof(float));
-    // memcpy(accel_bias_priori, instance->nomial_state_bias_accel_data_, ALGORITHM_ESKF_NOMINAL_STATE_BIAS_ACCEL_DIM * sizeof(float));
+    // 计算名义状态传播后的 bias,这里采用常值模型，所以保持不变
 
     //
     // 误差状态连续模型 
@@ -706,20 +686,17 @@ bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGOR
     mathMatrixTranspose(&rotate_matrix_b_to_n, &rotate_matrix_n_to_b);
 
     // 计算预测加速度计测量值
-    // accel_measure_predict = C_n_to_b * gravity_vec_n + bias_accel_priori
+    // accel_measure_predict = C_n_to_b * gravity_vec_n
     mathMatrix_t gravity_vec_b;
     mathMatrixInit(&gravity_vec_b, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, 1U, instance->temp_mat_3x1_0_data_);
     mathMatrixMult(&rotate_matrix_n_to_b, &instance->gravity_ref_n_, &gravity_vec_b);
-    for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_ACCEL_DIM * 1U; i ++) {
-        instance->temp_mat_3x1_1_data_[i] = instance->temp_mat_3x1_0_data_[i] + instance->nomial_state_bias_accel_data_[i];
-    }
 
     // 
     // 计算加速度计测量残差
     //
     // accel_residual = accel_measure - accel_measure_predict
     for (size_t i = 0; i < ALGORITHM_ESKF_MEASURE_ACCEL_DIM * 1U; i ++) {
-        instance->temp_mat_3x1_2_data_[i] = measurement[i] - instance->temp_mat_3x1_1_data_[i];
+        instance->temp_mat_3x1_2_data_[i] = measurement[i] - instance->temp_mat_3x1_0_data_[i];
     }
 
     //
@@ -735,7 +712,6 @@ bool algorithmESKFAccelUpdate(algorithmESKF_t *instance, float measurement[ALGOR
     mathMatrixInit(&gravity_vec_b_skew, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, ALGORITHM_ESKF_MEASURE_ACCEL_DIM, instance->temp_mat_3x3_2_data_);
     mathVec3BuildSkewSymmetricMatrix(&gravity_vec_b_vec3, instance->temp_mat_3x3_2_data_);
     mathMatrixSetBlockByMatrix(&instance->H_accel_, 0U, 0U, &gravity_vec_b_skew);
-    mathMatrixSetBlockIdentity(&instance->H_accel_, 0U, ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM + ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM, ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM, ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM);
 
     //
     // 计算创新协方差矩阵S

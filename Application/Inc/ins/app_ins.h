@@ -16,8 +16,8 @@ typedef struct app_INS_data
     float dt_s_;
     float quat_[4];
     float euler_zyx_rad_[3]; // ENU-FLU下,roll - x, pitch - y, yaw - z
+    float euler_zyx_deg_[3];
     float gyro_bias_rads_[3];
-    float accel_bias_ms2_[3];
 } appINSData_t;
 
 appState_e appINSGetAPPState(void);

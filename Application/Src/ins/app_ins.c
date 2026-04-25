@@ -1,5 +1,6 @@
 #include "FreeRTOS.h"
 #include "cmsis_os2.h"
+#include "general_math.h"
 #include "portmacro.h"
 #include "projdefs.h"
 #include "task.h"
@@ -39,10 +40,8 @@
 
 #define APP_INS_ESKF_INIT_ANGLE_ERROR_STD_RAD (10.0f * DEG_TO_RAD)
 #define APP_INS_ESKF_INIT_GYRO_BIAS_STD_RADS 0.05f
-#define APP_INS_ESKF_INIT_ACCEL_BIAS_STD_MS2 0.2f
 #define APP_INS_ESKF_GYRO_NOISE_RADS_SQRT_HZ 0.02f
 #define APP_INS_ESKF_GYRO_RANDOM_WALK_RADS2_SQRT_HZ 0.001f
-#define APP_INS_ESKF_ACCEL_RANDOM_WALK_MS3_SQRT_HZ 0.05f
 #define APP_INS_ESKF_ACCEL_NOISE_MS2_SQRT_HZ 0.2f
 #define APP_INS_ESKF_MAG_NOISE_UT_SQRT_HZ 1.0f
 #define APP_INS_ESKF_MAG_DECLINATION_RAD (-4.1333f * DEG_TO_RAD) // 磁偏角
@@ -213,13 +212,13 @@ static void appINSUpdateOutputDataFromESKF(void)
     if (mathQuaternionToEulerZYX(&app_ins_.eskf_.nominal_state_quat_, app_ins_.data_.euler_zyx_rad_) == false) {
         memset(app_ins_.data_.euler_zyx_rad_, 0, sizeof(app_ins_.data_.euler_zyx_rad_));
     }
+    app_ins_.data_.euler_zyx_deg_[0] = app_ins_.data_.euler_zyx_rad_[0] / DEG_TO_RAD;
+    app_ins_.data_.euler_zyx_deg_[1] = app_ins_.data_.euler_zyx_rad_[1] / DEG_TO_RAD;
+    app_ins_.data_.euler_zyx_deg_[2] = app_ins_.data_.euler_zyx_rad_[2] / DEG_TO_RAD;
 
     memcpy(app_ins_.data_.gyro_bias_rads_,
            app_ins_.eskf_.nomial_state_bias_gyro_data_,
            sizeof(app_ins_.data_.gyro_bias_rads_));
-    memcpy(app_ins_.data_.accel_bias_ms2_,
-           app_ins_.eskf_.nomial_state_bias_accel_data_,
-           sizeof(app_ins_.data_.accel_bias_ms2_));
 }
 
 static bool appINSBuildInitQuaternion(void)
@@ -328,7 +327,6 @@ static bool appINSInitESKF(void)
     algorithmESKFParams_t params;
     float angle_error_variance = APP_INS_ESKF_INIT_ANGLE_ERROR_STD_RAD * APP_INS_ESKF_INIT_ANGLE_ERROR_STD_RAD;
     float gyro_bias_variance = APP_INS_ESKF_INIT_GYRO_BIAS_STD_RADS * APP_INS_ESKF_INIT_GYRO_BIAS_STD_RADS;
-    float accel_bias_variance = APP_INS_ESKF_INIT_ACCEL_BIAS_STD_MS2 * APP_INS_ESKF_INIT_ACCEL_BIAS_STD_MS2;
 
     memset(&params, 0, sizeof(params));
 
@@ -343,16 +341,12 @@ static bool appINSInitESKF(void)
     memcpy(params.init_params_.gyro_bias_init_,
            app_ins_.calibrate_data_.gyro_bias_rads_,
            sizeof(params.init_params_.gyro_bias_init_));
-    memset(params.init_params_.accel_bias_init_, 0, sizeof(params.init_params_.accel_bias_init_));
 
     for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_SMALL_ANGLE_ERROR_DIM; i++) {
         params.init_params_.angle_error_variance_[i] = angle_error_variance;
     }
     for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DELTA_GYRO_BIAS_DIM; i++) {
         params.init_params_.delta_bias_gyro_variance_[i] = gyro_bias_variance;
-    }
-    for (size_t i = 0; i < ALGORITHM_ESKF_ERROR_STATE_DELTA_ACCEL_BIAS_DIM; i++) {
-        params.init_params_.delta_bias_accel_variance_[i] = accel_bias_variance;
     }
 
     // 设置重力（比力）参考和地磁参考向量
@@ -369,7 +363,6 @@ static bool appINSInitESKF(void)
 
     params.gyro_noise_rads_sqrt_hz_ = APP_INS_ESKF_GYRO_NOISE_RADS_SQRT_HZ;
     params.gyro_random_walk_rads2_sqrt_hz_ = APP_INS_ESKF_GYRO_RANDOM_WALK_RADS2_SQRT_HZ;
-    params.accel_random_walk_ms3_sqrt_hz_ = APP_INS_ESKF_ACCEL_RANDOM_WALK_MS3_SQRT_HZ;
     params.accel_noise_ms2_sqrt_hz_ = APP_INS_ESKF_ACCEL_NOISE_MS2_SQRT_HZ;
     params.mag_noise_ut_sqrt_hz_ = APP_INS_ESKF_MAG_NOISE_UT_SQRT_HZ;
 
