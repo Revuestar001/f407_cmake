@@ -63,6 +63,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/device/imu/bmi088.c
     Module/Src/device/magnetometer/ist8310.c
     Module/Src/device/motor/dji_m3508.c
+    Module/Src/device/motor/rmd_v2_x6.c
     Module/Src/algorithm/math/quaternion.c
     Module/Src/algorithm/math/vector3.c
     Module/Src/algorithm/math/matrix.c
