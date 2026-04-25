@@ -30,6 +30,8 @@ typedef struct motor_rmd_v2_x6_config
     motorRMDV2X6MotorID_e motor_id_;
     float reduction_ratio_; // 减速比
 
+    uint32_t fb_abs_angle_high_accuracy_timeout_us_; // 绝对角度反馈超时时间
+
     motorRMDV2X6GetAbsTimeUs_f abs_time_us_callback_;
 
     const char *name_;
@@ -37,3 +39,14 @@ typedef struct motor_rmd_v2_x6_config
 
 // 初始化电机实例，会注册CAN RX回调拷贝数据
 motorRMDV2X6Instance_t *motorRMDV2X6InstanceInit(motorRMDV2X6Config_t *config);
+// 设置力矩参考，Nm
+bool motorRMDV2X6SetEffortRef(motorRMDV2X6Instance_t *instance, float effort_ref_Nm);
+bool motorRMDV2X6SetWorkStatus(motorRMDV2X6Instance_t *instance, motorWorkStatus_e work_status);
+// 只发送力矩闭环控制报文
+motorStatus_e motorRMDV2X6SendEffortCommand(const motorRMDV2X6Instance_t *instance);
+// 只发送请求读取高精度多圈角度报文
+motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Instance_t *instance);
+motorStatus_e motorRMDV2X6UpdateFeedbackData(motorRMDV2X6Instance_t *instance);
+motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, motorFeedBackData_t *data_out);
+// 判断多圈绝对角度数据是否未过期
+bool motorRMDV2X6IsMultiRoundsAngleFresh(const motorRMDV2X6Instance_t *instance, uint64_t now_us);
