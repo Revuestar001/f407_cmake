@@ -320,6 +320,8 @@ motorStatus_e motorRMDV2X6UpdateFeedbackData(motorRMDV2X6Instance_t *instance)
 
     bspCriticalExit(irq_state);
 
+    // 只要低精度/高精度有一个是新的，就进行数据解析
+    // 注意实际上这样子简单的进行数据解析可能造成严重问题，比如角度数据太旧或者角度、速度不匹配
     if ((data_low_accuracy_raw_is_new == true || data_high_accuracy_raw_is_new == true) &&
         rawDataIsValid(data_low_accuracy_raw_timestamp_us) == true &&
         rawDataIsValid(data_high_accuracy_raw_timestamp_us) == true) {
@@ -356,6 +358,8 @@ motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, moto
     }
 
     uint64_t now_us = instance->abs_time_us_callback_();
+    // 如果高精度角度数据太旧，返回错误
+    // 其实降级处理而不是直接返回错误比较好
     if (rawDataIsFresh(instance->fb_data_.timestamp_us_,
                        now_us,
                        instance->fb_abs_angle_high_accuracy_timeout_us_) == false) {
