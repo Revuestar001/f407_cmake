@@ -11,11 +11,13 @@
 #include "bsp_board.h"
 #include "cmsis_os2.h"
 #include "dji_m3508.h"
+#include "rmd_v2_x6.h"
 #include "motor_actuator.h"
 #include "motor_actuator_group.h"
 #include "pid.h"
 #include "general_math.h"
 #include "motor_actuator_dji_adapter.h"
+#include "motor_actuator_myactuator_adapter.h"
 #include "app_remote_control.h"
 #include "app_chassis.h"
 #include "app_def.h"
@@ -25,6 +27,8 @@ typedef struct app_chassis
 {
     moduleMotorActuator_t actuator_[2U];
     moduleMotorActuatorGroup_t actuator_group_;
+
+    moduleMotorActuator_t hip_actuator_[2U];
 
     uint8_t error_count_;
 } appChassis_t;
@@ -65,35 +69,115 @@ static void appChassisBuildVelocityCommandFromRemoteControl(const appRemoteContr
     float motor_right_speed_ref_rads = -(linear_speed_ref_rads + turn_speed_ref_rads);
     float motor_speed_ref_limit_rads = APP_CHASSIS_MAX_LINEAR_SPEED_REF_RADS + APP_CHASSIS_MAX_TURN_SPEED_REF_RADS;
 
+    // mathClampf(motor_left_speed_ref_rads,
+    //            -motor_speed_ref_limit_rads,
+    //            motor_speed_ref_limit_rads,
+    //            &left_ref->velocity_ref_rads_);
+    // mathClampf(motor_right_speed_ref_rads,
+    //            -motor_speed_ref_limit_rads,
+    //            motor_speed_ref_limit_rads,
+    //            &right_ref->velocity_ref_rads_);
     mathClampf(motor_left_speed_ref_rads,
                -motor_speed_ref_limit_rads,
                motor_speed_ref_limit_rads,
-               &left_ref->velocity_ref_rads_);
+               &left_ref->position_ref_rad_);
     mathClampf(motor_right_speed_ref_rads,
                -motor_speed_ref_limit_rads,
                motor_speed_ref_limit_rads,
-               &right_ref->velocity_ref_rads_);
+               &right_ref->position_ref_rad_);
 }
 
 static bool appChassisInit(void)
 {
-    motorDJIM3508Config_t m3508_config = {
-        .can_instance_ = bspBoardGetCANInstance(BSP_CAN_1),
-        .motor_id_ = MOTOR_DJI_M3508_MOTOR_ID_1,
-        .reduction_ratio_ = 19.0f,
-        .abs_time_us_callback_ = bspDWTGetAbsTimeUs,
-        .name_ = "m3508_1",
-    };
+    // motorDJIM3508Config_t m3508_config = {
+    //     .can_instance_ = bspBoardGetCANInstance(BSP_CAN_1),
+    //     .motor_id_ = MOTOR_DJI_M3508_MOTOR_ID_1,
+    //     .reduction_ratio_ = 19.0f,
+    //     .abs_time_us_callback_ = bspDWTGetAbsTimeUs,
+    //     .name_ = "m3508_1",
+    // };
     
-    motorDJIM3508Instance_t *motor1 = motorDJIM3508InstanceInit(&m3508_config);
-    if (motor1 == NULL) {
-        return false;
-    }
+    // motorDJIM3508Instance_t *motor1 = motorDJIM3508InstanceInit(&m3508_config);
+    // if (motor1 == NULL) {
+    //     return false;
+    // }
 
-    m3508_config.motor_id_ = MOTOR_DJI_M3508_MOTOR_ID_2;
-    m3508_config.name_ = "m3508_2";
-    motorDJIM3508Instance_t *motor2 = motorDJIM3508InstanceInit(&m3508_config);
-    if (motor2 == NULL) {
+    // m3508_config.motor_id_ = MOTOR_DJI_M3508_MOTOR_ID_2;
+    // m3508_config.name_ = "m3508_2";
+    // motorDJIM3508Instance_t *motor2 = motorDJIM3508InstanceInit(&m3508_config);
+    // if (motor2 == NULL) {
+    //     return false;
+    // }
+
+    // algorithmPIDConfig_t angle_pid_config = {
+    //     .k_P_ = 4.0f,
+    //     .k_I_ = 0.0f,
+    //     .k_D_ = 0.0f,
+    //     .integral_lower_bound_ = -0.1f,
+    //     .integral_upper_bound_ = 0.1f,
+    //     .output_lower_bound_ = -4.0f,
+    //     .output_upper_bound_ = 4.0f,
+    //     .integral_method_ = ALGORITHM_PID_INTEGRAL_METHOD_TRAPEZOID,
+    //     .derivative_method_ = ALGORITHM_PID_DIFFERENTIAL_METHOD_ESTIMATE,
+    //     .derivative_filter_ = NULL,
+    //     .get_time_us_callback_ = bspDWTGetAbsTimeUs,
+    // };
+    // algorithmPIDConfig_t velocity_pid_config = {
+    //     .k_P_ = 3.0f,
+    //     .k_I_ = 0.5f,
+    //     .k_D_ = 0.0f,
+    //     .integral_lower_bound_ = -2.0f,
+    //     .integral_upper_bound_ = 2.0f,
+    //     .output_lower_bound_ = -5.0f,
+    //     .output_upper_bound_ = 5.0f,
+    //     .integral_method_ = ALGORITHM_PID_INTEGRAL_METHOD_TRAPEZOID,
+    //     .derivative_method_ = ALGORITHM_PID_DIFFERENTIAL_METHOD_ESTIMATE,
+    //     .derivative_filter_ = NULL,
+    //     .get_time_us_callback_ = bspDWTGetAbsTimeUs,
+    // };
+
+    // moduleMotorActuatorConfig_t actuator_config = {
+    //     .motor_instance_ = motor1,
+    //     .feedback_source_ = motor1,
+    //     .angle_pid_config_ = angle_pid_config,
+    //     .angular_velocity_pid_config_ = velocity_pid_config,
+    //     .command_ops_ = adapterGetDJIM3508CommandOps(),
+    //     .feedback_ops_ = adapterGetDJIM3508FeedbackOps(),
+    //     .control_loop_ = MODULE_MOTOR_ACTUATOR_CTRL_LOOP_SPEED,
+    //     .command_type_ = MODULE_MOTOR_ACTUATOR_CMD_TYPE_EFFORT,
+    //     .feedback_side_ = MODULE_MOTOR_ACTUATOR_FEEDBACK_SIDE_OUTPUT,
+    //     .command_sign_ = 1.0f,
+    //     .feedback_sign_ = 1.0f,
+    // };
+
+    // if (moduleMotorActuatorInit(&app_chassis_.actuator_[0], &actuator_config) == false) {
+    //     return false;
+    // }
+
+    // actuator_config.motor_instance_ = motor2;
+    // actuator_config.feedback_source_ = motor2;
+    // if (moduleMotorActuatorInit(&app_chassis_.actuator_[1], &actuator_config) == false) {
+    //     return false;
+    // }
+    
+    // moduleMotorActuator_t *actuator_temp[4U] = {0};
+    // actuator_temp[0] = &app_chassis_.actuator_[0];
+    // actuator_temp[1] = &app_chassis_.actuator_[1];
+    // if (moduleMotorActuatorGroupInit(&app_chassis_.actuator_group_, actuator_temp, adapterGetDJIM3508GroupCommandOps()) == false) {
+    //     return false;
+    // }
+
+    motorRMDV2X6Config_t x6_config = {
+        .motor_id_ = MOTOR_RMD_V2_X6_MOTOR_ID_2,
+        .can_instance_ = bspBoardGetCANInstance(BSP_CAN_1),
+        .fb_abs_angle_high_accuracy_timeout_us_ = 10000000U,
+        .reduction_ratio_ = 6.0f,
+        .abs_time_us_callback_ = bspDWTGetAbsTimeUs,
+        .name_ = "x6_1",
+    };
+
+    motorRMDV2X6Instance_t *x6 = motorRMDV2X6InstanceInit(&x6_config);
+    if (x6 == NULL) {
         return false;
     }
 
@@ -116,8 +200,8 @@ static bool appChassisInit(void)
         .k_D_ = 0.0f,
         .integral_lower_bound_ = -2.0f,
         .integral_upper_bound_ = 2.0f,
-        .output_lower_bound_ = -5.0f,
-        .output_upper_bound_ = 5.0f,
+        .output_lower_bound_ = -1.0f,
+        .output_upper_bound_ = 1.0f,
         .integral_method_ = ALGORITHM_PID_INTEGRAL_METHOD_TRAPEZOID,
         .derivative_method_ = ALGORITHM_PID_DIFFERENTIAL_METHOD_ESTIMATE,
         .derivative_filter_ = NULL,
@@ -125,33 +209,20 @@ static bool appChassisInit(void)
     };
 
     moduleMotorActuatorConfig_t actuator_config = {
-        .motor_instance_ = motor1,
-        .feedback_source_ = motor1,
+        .motor_instance_ = x6,
+        .feedback_source_ = x6,
         .angle_pid_config_ = angle_pid_config,
         .angular_velocity_pid_config_ = velocity_pid_config,
-        .command_ops_ = adapterGetDJIM3508CommandOps(),
-        .feedback_ops_ = adapterGetDJIM3508FeedbackOps(),
-        .control_loop_ = MODULE_MOTOR_ACTUATOR_CTRL_LOOP_SPEED,
+        .command_ops_ = adapterGetRMDV2X6CommandOps(),
+        .feedback_ops_ = adapterGetRMDV2X6FeedbackOps(),
+        .control_loop_ = MODULE_MOTOR_ACTUATOR_CTRL_LOOP_ANGLE_AND_SPEED,
         .command_type_ = MODULE_MOTOR_ACTUATOR_CMD_TYPE_EFFORT,
         .feedback_side_ = MODULE_MOTOR_ACTUATOR_FEEDBACK_SIDE_OUTPUT,
         .command_sign_ = 1.0f,
         .feedback_sign_ = 1.0f,
     };
 
-    if (moduleMotorActuatorInit(&app_chassis_.actuator_[0], &actuator_config) == false) {
-        return false;
-    }
-
-    actuator_config.motor_instance_ = motor2;
-    actuator_config.feedback_source_ = motor2;
-    if (moduleMotorActuatorInit(&app_chassis_.actuator_[1], &actuator_config) == false) {
-        return false;
-    }
-    
-    moduleMotorActuator_t *actuator_temp[4U] = {0};
-    actuator_temp[0] = &app_chassis_.actuator_[0];
-    actuator_temp[1] = &app_chassis_.actuator_[1];
-    if (moduleMotorActuatorGroupInit(&app_chassis_.actuator_group_, actuator_temp, adapterGetDJIM3508GroupCommandOps()) == false) {
+    if (moduleMotorActuatorInit(&app_chassis_.hip_actuator_[0], &actuator_config) == false) {
         return false;
     }
     
@@ -175,10 +246,13 @@ void appChassisTaskEntry(void *argument)
     while (appChassisInit() != true) {
         osDelay(pdMS_TO_TICKS(100));
     }
-    while (moduleMotorActuatorEnableMotor(&app_chassis_.actuator_[0]) != true) {
-        osDelay(pdMS_TO_TICKS(100));
-    }
-    while (moduleMotorActuatorEnableMotor(&app_chassis_.actuator_[1]) != true) {
+    // while (moduleMotorActuatorEnableMotor(&app_chassis_.actuator_[0]) != true) {
+    //     osDelay(pdMS_TO_TICKS(100));
+    // }
+    // while (moduleMotorActuatorEnableMotor(&app_chassis_.actuator_[1]) != true) {
+    //     osDelay(pdMS_TO_TICKS(100));
+    // }
+    while (moduleMotorActuatorEnableMotor(&app_chassis_.hip_actuator_[0]) != true) {
         osDelay(pdMS_TO_TICKS(100));
     }
     moduleMotorActuatorCommandRef_t left_ref = {0};
@@ -201,22 +275,31 @@ void appChassisTaskEntry(void *argument)
 
         appChassisBuildVelocityCommandFromRemoteControl(&remote_control_command, &left_ref, &right_ref);
 
-        motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[0], &left_ref);
-        if (motor_status != MOTOR_OK) {
-            app_chassis_.error_count_ ++;
-        }
-        motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[1], &right_ref);
+        // motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[0], &left_ref);
+        // if (motor_status != MOTOR_OK) {
+        //     app_chassis_.error_count_ ++;
+        // }
+        // motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[1], &right_ref);
+        // if (motor_status != MOTOR_OK) {
+        //     app_chassis_.error_count_ ++;
+        // }
+
+        // motor_status = moduleMotorActuatorGroupCommit(&app_chassis_.actuator_group_);
+        // if (motor_status != MOTOR_OK) {
+        //     app_chassis_.error_count_ ++;
+        // }
+
+        // left_ref.effort_ref_ = 1.0f;
+        motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.hip_actuator_[0], &left_ref);
         if (motor_status != MOTOR_OK) {
             app_chassis_.error_count_ ++;
         }
 
-        motor_status = moduleMotorActuatorGroupCommit(&app_chassis_.actuator_group_);
+        motor_status = moduleMotorActuatorCommit(&app_chassis_.hip_actuator_[0]);
         if (motor_status != MOTOR_OK) {
             app_chassis_.error_count_ ++;
         }
 
-        osDelay(pdMS_TO_TICKS(1));
+        osDelay(pdMS_TO_TICKS(10));
     }
 }
-
-

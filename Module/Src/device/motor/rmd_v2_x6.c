@@ -1,4 +1,4 @@
-#include <stdbool.h>
+﻿#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -12,6 +12,7 @@
 #define MOTOR_RMD_V2_X6_RX_BASE_ID 0x240U
 
 #define MOTOR_RMD_V2_X6_PEAK_TORQUE_NM 7.0f
+#define MOTOR_RMD_V2_X6_TORQUE_CONSTANT 0.88f
 
 #define MOTOR_RMD_V2_X6_MULTI_ROUNDS_ANGLE_PRECISION_DEG 0.01f
 #define MOTOR_RMD_V2_X6_CURRENT_PRECISION_A 0.01f
@@ -206,13 +207,13 @@ bool motorRMDV2X6SetWorkStatus(motorRMDV2X6Instance_t *instance, motorWorkStatus
     return true;
 }
 
-static bool buildCANTxMessage(motorRMDV2X6TxBaseID_e tx_base_id_, const uint8_t *tx_data, bspCANMessage_t *tx_message)
+static bool buildCANTxMessage(const motorRMDV2X6Instance_t *instance, const uint8_t *tx_data, bspCANMessage_t *tx_message)
 {
-    if (tx_data == NULL || tx_message == NULL) {
+    if (instance == NULL || tx_data == NULL || tx_message == NULL) {
         return false;
     }
 
-    tx_message->message_header_.message_id_ = tx_base_id_;
+    tx_message->message_header_.message_id_ = instance->tx_base_id_ + (uint32_t)instance->motor_id_;
     tx_message->message_header_.message_ide_ = 0U;
     tx_message->message_header_.message_rtr_ = 0U;
     tx_message->message_header_.message_dlc_ = MOTOR_RMD_V2_X6_CAN_RX_DLC;
@@ -259,14 +260,14 @@ motorStatus_e motorRMDV2X6SendEffortCommand(const motorRMDV2X6Instance_t *instan
         return MOTOR_ERROR;
     }
 
-    int16_t torque_ref = (int16_t)(instance->effort_ref_Nm_);
+    int16_t torque_ref = (int16_t)(100.0f * instance->effort_ref_Nm_ / MOTOR_RMD_V2_X6_TORQUE_CONSTANT);
 
     bspCANMessage_t torque_message;
     uint8_t torque_data[MOTOR_RMD_V2_X6_CAN_RX_DLC] = {0U};
     torque_data[0] = MOTOR_RMD_V2_X6_TX_CMD_TORQUE_LOOP;
     torque_data[4] = (uint8_t)torque_ref; // 低字节在前
     torque_data[5] = (uint8_t)(torque_ref >> 8);
-    if (buildCANTxMessage(instance->tx_base_id_, torque_data, &torque_message) == false) {
+    if (buildCANTxMessage(instance, torque_data, &torque_message) == false) {
         return MOTOR_ERROR;
     }
 
@@ -278,7 +279,7 @@ motorStatus_e motorRMDV2X6SendEffortCommand(const motorRMDV2X6Instance_t *instan
 }
 
 // 只发送请求读取高精度多圈角度报文
-static motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Instance_t *instance)
+motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Instance_t *instance)
 {
     if (instance == NULL) {
         return MOTOR_ERROR;
@@ -287,7 +288,7 @@ static motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV
     bspCANMessage_t tx_message;
     uint8_t tx_data[MOTOR_RMD_V2_X6_CAN_RX_DLC] = {0U};
     tx_data[0] = MOTOR_RMD_V2_X6_TX_CMD_READ_MULTI_ROUNDS_ANGLE;
-    if (buildCANTxMessage(instance->tx_base_id_, tx_data, &tx_message) == false) {
+    if (buildCANTxMessage(instance, tx_data, &tx_message) == false) {
         return MOTOR_ERROR;
     }
 
@@ -403,3 +404,4 @@ motorStatus_e motorRMDV2X6SetSingleMotorCANID(bspCANInstance_t *can_instance, ui
     return MOTOR_OK;
 }
 #endif
+

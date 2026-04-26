@@ -58,3 +58,6 @@ motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, moto
 // 使用前应确保总线上只连接目标电机，避免多个设备同时响应 0x300 配置报文。
 motorStatus_e motorRMDV2X6SetSingleMotorCANID(bspCANInstance_t *can_instance, uint16_t can_id);
 #endif
+
+
+motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Instance_t *instance);

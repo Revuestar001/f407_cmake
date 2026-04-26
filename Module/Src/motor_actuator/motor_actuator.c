@@ -372,6 +372,22 @@ motorStatus_e moduleMotorActuatorUpdate(moduleMotorActuator_t *instance, float c
     return moduleMotorActuatorUpdateCommand(instance, &control_ref);
 }
 
+motorStatus_e moduleMotorActuatorCommit(moduleMotorActuator_t *instance)
+{
+    if (instance == NULL || instance->motor_instance_ == NULL) {
+        return MOTOR_ERROR;
+    }
+
+    motorStatus_e motor_status;
+    // 这个返回值我觉得比较重要，但是可能这个函数不要用bool比较好
+    motor_status = instance->command_ops_->commit_command_(instance->motor_instance_);
+    if (motor_status != MOTOR_OK) {
+        return motor_status;
+    }
+    
+    return MOTOR_OK;
+}
+
 motorStatus_e moduleMotorActuatorGetFeedbackData(moduleMotorActuator_t *instance, motorFeedBackData_t *data_out)
 {
     if (instance == NULL || data_out == NULL || instance->is_initialized_ == false) {

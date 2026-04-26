@@ -116,5 +116,7 @@ bool moduleMotorActuatorDisableMotor(moduleMotorActuator_t *instance);
 motorStatus_e moduleMotorActuatorUpdateCommand(moduleMotorActuator_t *instance, const moduleMotorActuatorCommandRef_t *control_ref);
 // 更新单个电机的控制指令值，不负责发送指令，请尽量不要使用这个接口
 motorStatus_e moduleMotorActuatorUpdate(moduleMotorActuator_t *instance, float control_target);
+// 按单电机发送指令，成组发送的电机请不要使用这个接口
+motorStatus_e moduleMotorActuatorCommit(moduleMotorActuator_t *instance);
 // 获取反馈数据，已转到actuator系下
 motorStatus_e moduleMotorActuatorGetFeedbackData(moduleMotorActuator_t *instance, motorFeedBackData_t *data_out);
