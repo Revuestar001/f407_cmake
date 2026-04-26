@@ -29,6 +29,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "bsp_board.h"
+#include "bsp_can.h"
+#include "rmd_v2_x6.h"
+#include "user_def.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,7 +64,83 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#if USER_RMD_V2_X6_CAN_ID_CONFIG_ENABLE
+#define MAIN_RMD_V2_X6_CAN_ID_CONFIG_TX_ID 0x300U
+#define MAIN_RMD_V2_X6_CAN_ID_CONFIG_DLC 8U
+#define MAIN_RMD_V2_X6_CAN_ID_CONFIG_WRITE_FLAG 0U
 
+static volatile bool main_rmd_v2_x6_can_id_config_reply_ok_ = false;
+static uint8_t main_rmd_v2_x6_can_id_config_expected_reply_[MAIN_RMD_V2_X6_CAN_ID_CONFIG_DLC] = {0U};
+
+static void mainRMDV2X6CANIDConfigReplyCallback(void *owner, const bspCANMessage_t *rx_message)
+{
+  if (owner == NULL || rx_message == NULL) {
+    return;
+  }
+
+  if (rx_message->message_header_.message_id_ != MAIN_RMD_V2_X6_CAN_ID_CONFIG_TX_ID ||
+      rx_message->message_header_.message_ide_ != 0U ||
+      rx_message->message_header_.message_dlc_ != MAIN_RMD_V2_X6_CAN_ID_CONFIG_DLC) {
+    return;
+  }
+
+  for (uint32_t i = 0; i < MAIN_RMD_V2_X6_CAN_ID_CONFIG_DLC; i++) {
+    if (rx_message->message_data_[i] != main_rmd_v2_x6_can_id_config_expected_reply_[i]) {
+      return;
+    }
+  }
+
+  *((volatile bool *)owner) = true;
+}
+
+static void mainRunRMDV2X6CANIDConfigMode(void)
+{
+  bspCANInstance_t *can_instance = bspBoardGetCANInstance(BSP_CAN_1);
+  if (can_instance == NULL) {
+    Error_Handler();
+  }
+
+  for (uint32_t i = 0; i < MAIN_RMD_V2_X6_CAN_ID_CONFIG_DLC; i++) {
+    main_rmd_v2_x6_can_id_config_expected_reply_[i] = 0U;
+  }
+  main_rmd_v2_x6_can_id_config_expected_reply_[0] = 0x79U;
+  main_rmd_v2_x6_can_id_config_expected_reply_[2] = MAIN_RMD_V2_X6_CAN_ID_CONFIG_WRITE_FLAG;
+  main_rmd_v2_x6_can_id_config_expected_reply_[7] = (uint8_t)USER_RMD_V2_X6_CAN_ID_CONFIG_TARGET_CAN_ID;
+
+  bspCANRxRoute_t rx_route = {0};
+  rx_route.route_id_ = MAIN_RMD_V2_X6_CAN_ID_CONFIG_TX_ID;
+  rx_route.route_ide_ = 0U;
+  rx_route.route_id_mask_ = 0U;
+  rx_route.route_owner_ = (void *)&main_rmd_v2_x6_can_id_config_reply_ok_;
+  rx_route.route_rx_callback_ = mainRMDV2X6CANIDConfigReplyCallback;
+  bspCANRxCallbackRegister(can_instance, rx_route);
+
+  if (bspCANSetFilter(can_instance) != BSP_CAN_OK) {
+    Error_Handler();
+  }
+
+  if (bspCANStart(can_instance) != BSP_CAN_OK) {
+    Error_Handler();
+  }
+
+  while (1) {
+    main_rmd_v2_x6_can_id_config_reply_ok_ = false;
+
+    if (motorRMDV2X6SetSingleMotorCANID(can_instance, USER_RMD_V2_X6_CAN_ID_CONFIG_TARGET_CAN_ID) == MOTOR_OK) {
+      uint32_t wait_start_ms = HAL_GetTick();
+      while ((HAL_GetTick() - wait_start_ms) < USER_RMD_V2_X6_CAN_ID_CONFIG_REPLY_TIMEOUT_MS) {
+        if (main_rmd_v2_x6_can_id_config_reply_ok_ == true) {
+          while (1) {
+            HAL_Delay(1000);
+          }
+        }
+      }
+    }
+
+    HAL_Delay(USER_RMD_V2_X6_CAN_ID_CONFIG_SEND_PERIOD_MS);
+  }
+}
+#endif
 /* USER CODE END 0 */
 
 /**
@@ -101,6 +180,9 @@ int main(void)
   MX_I2C3_Init();
   /* USER CODE BEGIN 2 */
   bspBoardInit();
+#if USER_RMD_V2_X6_CAN_ID_CONFIG_ENABLE
+  mainRunRMDV2X6CANIDConfigMode();
+#endif
   /* USER CODE END 2 */
 
   /* Init scheduler */

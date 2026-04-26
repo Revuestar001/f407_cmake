@@ -16,6 +16,12 @@
 #define MOTOR_RMD_V2_X6_MULTI_ROUNDS_ANGLE_PRECISION_DEG 0.01f
 #define MOTOR_RMD_V2_X6_CURRENT_PRECISION_A 0.01f
 
+#define MOTOR_RMD_V2_X6_CAN_ID_CONFIG_TX_ID 0x300U
+#define MOTOR_RMD_V2_X6_CAN_ID_CONFIG_CMD 0x79U
+#define MOTOR_RMD_V2_X6_CAN_ID_CONFIG_WRITE_FLAG 0U
+#define MOTOR_RMD_V2_X6_CAN_ID_MIN 1U
+#define MOTOR_RMD_V2_X6_CAN_ID_MAX 32U
+
 typedef enum
 {
     MOTOR_RMD_V2_X6_TX_CMD_READ_MULTI_ROUNDS_ANGLE = 0x92U,
@@ -370,3 +376,30 @@ motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, moto
 
     return MOTOR_OK;
 }
+#if MOTOR_RMD_V2_X6_ENABLE_CAN_ID_CONFIG
+motorStatus_e motorRMDV2X6SetSingleMotorCANID(bspCANInstance_t *can_instance, uint16_t can_id)
+{
+    if (can_instance == NULL) {
+        return MOTOR_ERROR;
+    }
+
+    if (can_id < MOTOR_RMD_V2_X6_CAN_ID_MIN || can_id > MOTOR_RMD_V2_X6_CAN_ID_MAX) {
+        return MOTOR_ERROR;
+    }
+
+    bspCANMessage_t tx_message = {0};
+    tx_message.message_header_.message_id_ = MOTOR_RMD_V2_X6_CAN_ID_CONFIG_TX_ID;
+    tx_message.message_header_.message_ide_ = 0U;
+    tx_message.message_header_.message_rtr_ = 0U;
+    tx_message.message_header_.message_dlc_ = MOTOR_RMD_V2_X6_CAN_RX_DLC;
+    tx_message.message_data_[0] = MOTOR_RMD_V2_X6_CAN_ID_CONFIG_CMD;
+    tx_message.message_data_[2] = MOTOR_RMD_V2_X6_CAN_ID_CONFIG_WRITE_FLAG;
+    tx_message.message_data_[7] = (uint8_t)can_id;
+
+    if (bspCANTransmit(can_instance, &tx_message) != BSP_CAN_OK) {
+        return MOTOR_TX_FAILURE;
+    }
+
+    return MOTOR_OK;
+}
+#endif

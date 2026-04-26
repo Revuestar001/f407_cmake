@@ -4,8 +4,12 @@
 
 #include "bsp_can.h"
 #include "motor_def.h"
+#include "user_def.h"
 
 #define MOTOR_RMD_V2_X6_MAX_INSTANCE_NUM 4U
+#ifndef MOTOR_RMD_V2_X6_ENABLE_CAN_ID_CONFIG
+#define MOTOR_RMD_V2_X6_ENABLE_CAN_ID_CONFIG USER_RMD_V2_X6_CAN_ID_CONFIG_ENABLE
+#endif
 
 typedef enum
 {
@@ -48,3 +52,9 @@ motorStatus_e motorRMDV2X6SendEffortCommand(const motorRMDV2X6Instance_t *instan
 motorStatus_e motorRMDV2X6UpdateFeedbackData(motorRMDV2X6Instance_t *instance);
 // 获取当前缓存的统一反馈；若缓存尚未初始化或已超时，返回非 MOTOR_OK
 motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, motorFeedBackData_t *data_out);
+
+#if MOTOR_RMD_V2_X6_ENABLE_CAN_ID_CONFIG
+// 独立于当前驱动实例逻辑的单电机 CAN ID 设置 utility。
+// 使用前应确保总线上只连接目标电机，避免多个设备同时响应 0x300 配置报文。
+motorStatus_e motorRMDV2X6SetSingleMotorCANID(bspCANInstance_t *can_instance, uint16_t can_id);
+#endif
