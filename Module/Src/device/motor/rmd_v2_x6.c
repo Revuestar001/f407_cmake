@@ -272,7 +272,7 @@ motorStatus_e motorRMDV2X6SendEffortCommand(const motorRMDV2X6Instance_t *instan
 }
 
 // 只发送请求读取高精度多圈角度报文
-motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Instance_t *instance)
+static motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Instance_t *instance)
 {
     if (instance == NULL) {
         return MOTOR_ERROR;
@@ -289,7 +289,7 @@ motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Inst
         return MOTOR_TX_FAILURE;
     }
     
-    return  MOTOR_OK;
+    return MOTOR_OK;
 }
 
 motorStatus_e motorRMDV2X6UpdateFeedbackData(motorRMDV2X6Instance_t *instance)
@@ -302,34 +302,43 @@ motorStatus_e motorRMDV2X6UpdateFeedbackData(motorRMDV2X6Instance_t *instance)
     uint8_t data_high_accuracy_raw[MOTOR_RMD_V2_X6_CAN_RX_DLC];
     uint64_t data_low_accuracy_raw_timestamp_us;
     uint64_t data_high_accuracy_raw_timestamp_us;
+    bool data_low_accuracy_raw_is_new;
+    bool data_high_accuracy_raw_is_new;
+    bool feedback_is_updated = false;
 
     bspCriticalIRQState_t irq_state;
     irq_state = bspCriticalEnter();
 
-    if (instance->fb_data_low_accuracy_raw_is_new_ == false && instance->fb_abs_angle_high_accuracy_raw_is_new_ == false) {
-        bspCriticalExit(irq_state);
-        return MOTOR_NO_NEW_DATA;
-    }
-
-    if (rawDataIsValid(instance->fb_data_low_accuracy_raw_timestamp_us_) == false || rawDataIsValid(instance->fb_abs_angle_high_accuracy_raw_timestamp_us_) == false) {
-        bspCriticalExit(irq_state);
-        return MOTOR_NO_NEW_DATA;
-    }
-
+    data_low_accuracy_raw_is_new = instance->fb_data_low_accuracy_raw_is_new_;
+    data_high_accuracy_raw_is_new = instance->fb_abs_angle_high_accuracy_raw_is_new_;
     memcpy(data_low_accuracy_raw, instance->fb_data_low_accuracy_raw_, MOTOR_RMD_V2_X6_CAN_RX_DLC);
     memcpy(data_high_accuracy_raw, instance->fb_abs_angle_high_accuracy_raw_, MOTOR_RMD_V2_X6_CAN_RX_DLC);
     data_low_accuracy_raw_timestamp_us = instance->fb_data_low_accuracy_raw_timestamp_us_;
     data_high_accuracy_raw_timestamp_us = instance->fb_abs_angle_high_accuracy_raw_timestamp_us_;
     instance->fb_data_low_accuracy_raw_is_new_ = false;
-    instance->fb_abs_angle_high_accuracy_raw_is_new_ = false; 
+    instance->fb_abs_angle_high_accuracy_raw_is_new_ = false;
 
     bspCriticalExit(irq_state);
 
-    if (decodeFeedbackDataFromRaw(instance, data_low_accuracy_raw, data_high_accuracy_raw, data_low_accuracy_raw_timestamp_us, data_high_accuracy_raw_timestamp_us) == false) {
-        return MOTOR_ERROR;
+    if ((data_low_accuracy_raw_is_new == true || data_high_accuracy_raw_is_new == true) &&
+        rawDataIsValid(data_low_accuracy_raw_timestamp_us) == true &&
+        rawDataIsValid(data_high_accuracy_raw_timestamp_us) == true) {
+        if (decodeFeedbackDataFromRaw(instance,
+                                      data_low_accuracy_raw,
+                                      data_high_accuracy_raw,
+                                      data_low_accuracy_raw_timestamp_us,
+                                      data_high_accuracy_raw_timestamp_us) == false) {
+            return MOTOR_ERROR;
+        }
+        feedback_is_updated = true;
     }
 
-    return MOTOR_OK;
+    motorStatus_e request_status = motorRMDV2X6SendReadMultiRoundsAngleCommand(instance);
+    if (request_status != MOTOR_OK && request_status != MOTOR_TX_FAILURE) {
+        return request_status;
+    }
+
+    return feedback_is_updated == true ? MOTOR_OK : MOTOR_NO_NEW_DATA;
 }
 
 motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, motorFeedBackData_t *data_out)
@@ -338,16 +347,22 @@ motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, moto
         return MOTOR_ERROR;
     }
 
+    if (instance->fb_data_.timestamp_us_ == 0U) {
+        return MOTOR_NO_NEW_DATA;
+    }
+
+    if (instance->abs_time_us_callback_ == NULL) {
+        return MOTOR_ERROR;
+    }
+
+    uint64_t now_us = instance->abs_time_us_callback_();
+    if (rawDataIsFresh(instance->fb_data_.timestamp_us_,
+                       now_us,
+                       instance->fb_abs_angle_high_accuracy_timeout_us_) == false) {
+        return MOTOR_ERROR;
+    }
+
     *data_out = instance->fb_data_;
 
     return MOTOR_OK;
-}
-
-bool motorRMDV2X6IsMultiRoundsAngleFresh(const motorRMDV2X6Instance_t *instance, uint64_t now_us)
-{   
-    if (instance == NULL) {
-        return false;
-    }
-
-    return rawDataIsFresh(instance->fb_abs_angle_high_accuracy_raw_timestamp_us_, now_us, instance->fb_abs_angle_high_accuracy_timeout_us_);
 }

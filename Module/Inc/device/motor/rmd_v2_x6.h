@@ -18,7 +18,7 @@ typedef enum
 typedef enum
 {
     MOTOR_RMD_V2_X6_SINGLE_BASE_ID = 0x140U,
-} motorRMDV2X6TxBaseID_e; // tx时可以按单电机或group发送
+} motorRMDV2X6TxBaseID_e; // tx时可以按单电机或group发送，这里暂时只支持单电机
 
 typedef uint64_t (*motorRMDV2X6GetAbsTimeUs_f)(void);
 typedef struct motor_rmd_v2_x6_instance motorRMDV2X6Instance_t;
@@ -30,7 +30,7 @@ typedef struct motor_rmd_v2_x6_config
     motorRMDV2X6MotorID_e motor_id_;
     float reduction_ratio_; // 减速比
 
-    uint32_t fb_abs_angle_high_accuracy_timeout_us_; // 绝对角度反馈超时时间
+    uint32_t fb_abs_angle_high_accuracy_timeout_us_; // 统一反馈超时时间
 
     motorRMDV2X6GetAbsTimeUs_f abs_time_us_callback_;
 
@@ -44,9 +44,7 @@ bool motorRMDV2X6SetEffortRef(motorRMDV2X6Instance_t *instance, float effort_ref
 bool motorRMDV2X6SetWorkStatus(motorRMDV2X6Instance_t *instance, motorWorkStatus_e work_status);
 // 只发送力矩闭环控制报文
 motorStatus_e motorRMDV2X6SendEffortCommand(const motorRMDV2X6Instance_t *instance);
-// 只发送请求读取高精度多圈角度报文
-motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Instance_t *instance);
+// 解析已到达的反馈，并在内部请求下一次高精度多圈角度反馈
 motorStatus_e motorRMDV2X6UpdateFeedbackData(motorRMDV2X6Instance_t *instance);
+// 获取当前缓存的统一反馈；若缓存尚未初始化或已超时，返回非 MOTOR_OK
 motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, motorFeedBackData_t *data_out);
-// 判断多圈绝对角度数据是否未过期
-bool motorRMDV2X6IsMultiRoundsAngleFresh(const motorRMDV2X6Instance_t *instance, uint64_t now_us);
