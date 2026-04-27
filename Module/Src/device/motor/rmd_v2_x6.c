@@ -25,10 +25,13 @@
 
 typedef enum
 {
+    MOTOR_RMD_V2_X6_TX_CMD_ACTIVE_REPLY = 0xB6U,
     MOTOR_RMD_V2_X6_TX_CMD_READ_MULTI_ROUNDS_ANGLE = 0x92U,
     MOTOR_RMD_V2_X6_TX_CMD_TORQUE_LOOP = 0xA1U, // 力矩闭环控制
 } motorRMDV2X6TxCommand_e;
 
+#define MOTOR_RMD_V2_X6_ACTIVE_REPLY_ENABLE 1U
+#define MOTOR_RMD_V2_X6_ACTIVE_REPLY_DISABLE 0U
 typedef enum
 {
     MOTOR_RMD_V2_X6_RX_CMD_READ_MULTI_ROUNDS_ANGLE = 0x92U,
@@ -146,6 +149,26 @@ static bool rawDataIsFresh(uint64_t timestamp_us, uint64_t now_us, uint32_t time
     return timestamp_us != 0U && now_us >= timestamp_us && (now_us - timestamp_us) <= timeout_us;
 }
 
+static float motorRMDV2X6ParseHighAccuracyAngleTotalReducedRad(const uint8_t *high_accuracy_raw)
+{
+    int32_t angle_abs_total_reduced_int32;
+
+    if (high_accuracy_raw == NULL) {
+        return 0.0f;
+    }
+
+    angle_abs_total_reduced_int32 = (int32_t)high_accuracy_raw[4] |
+                                    (int32_t)high_accuracy_raw[5] << 8 |
+                                    (int32_t)high_accuracy_raw[6] << 16 |
+                                    (int32_t)high_accuracy_raw[7] << 24;
+
+    return (float)angle_abs_total_reduced_int32 * MOTOR_RMD_V2_X6_MULTI_ROUNDS_ANGLE_PRECISION_DEG * DEG_TO_RAD;
+}
+
+static motorStatus_e motorRMDV2X6SetReadMultiRoundsAngleActiveReply(const motorRMDV2X6Instance_t *instance,
+                                                                    bool enable,
+                                                                    uint16_t reply_interval_10ms);
+
 motorRMDV2X6Instance_t *motorRMDV2X6InstanceInit(motorRMDV2X6Config_t *config)
 {
     if (config == NULL || config->abs_time_us_callback_ == NULL || config->reduction_ratio_ <= 0.0f) {
@@ -202,6 +225,15 @@ bool motorRMDV2X6SetWorkStatus(motorRMDV2X6Instance_t *instance, motorWorkStatus
         return false;
     }
 
+#if USER_RMD_V2_X6_DIRECT_READ_92_DEBUG_ENABLE == 0U
+    if (work_status == MOTOR_WORK_STATUS_ENABLE) {
+        motorStatus_e motor_status = motorRMDV2X6SetReadMultiRoundsAngleActiveReply(instance, true, 1U);
+        if (motor_status != MOTOR_OK) {
+            return false;
+        }
+    }
+#endif
+
     instance->work_status_ = work_status;
 
     return true;
@@ -222,19 +254,49 @@ static bool buildCANTxMessage(const motorRMDV2X6Instance_t *instance, const uint
     return true;
 }
 
-static bool decodeFeedbackDataFromRaw(motorRMDV2X6Instance_t *instance, const uint8_t *low_accuracy, const uint8_t *high_accuracy, uint64_t low_accuracy_timestamp_us, uint64_t high_accuracy_timestamp_us)
+static motorStatus_e motorRMDV2X6SetReadMultiRoundsAngleActiveReply(const motorRMDV2X6Instance_t *instance,
+                                                                    bool enable,
+                                                                    uint16_t reply_interval_10ms)
 {
-    if (instance == NULL || low_accuracy == NULL || high_accuracy == NULL) {
+    if (instance == NULL) {
+        return MOTOR_ERROR;
+    }
+
+    bspCANMessage_t tx_message;
+    uint8_t tx_data[MOTOR_RMD_V2_X6_CAN_RX_DLC] = {0U};
+    tx_data[0] = MOTOR_RMD_V2_X6_TX_CMD_ACTIVE_REPLY;
+    tx_data[1] = MOTOR_RMD_V2_X6_TX_CMD_READ_MULTI_ROUNDS_ANGLE;
+    tx_data[2] = enable == true ? MOTOR_RMD_V2_X6_ACTIVE_REPLY_ENABLE : MOTOR_RMD_V2_X6_ACTIVE_REPLY_DISABLE;
+    tx_data[3] = (uint8_t)(reply_interval_10ms & 0x00FFU);
+    tx_data[4] = (uint8_t)((reply_interval_10ms >> 8) & 0x00FFU);
+    if (buildCANTxMessage(instance, tx_data, &tx_message) == false) {
+        return MOTOR_ERROR;
+    }
+
+    if (bspCANTransmit(instance->can_instance_, &tx_message) != BSP_CAN_OK) {
+        return MOTOR_TX_FAILURE;
+    }
+
+    return MOTOR_OK;
+}
+
+static bool decodeFeedbackDataFromRaw(motorRMDV2X6Instance_t *instance,
+                                      const uint8_t *low_accuracy,
+                                      uint64_t low_accuracy_timestamp_us,
+                                      const uint8_t *high_accuracy,
+                                      bool use_high_accuracy_angle)
+{
+    if (instance == NULL || low_accuracy == NULL) {
         return false;
     }
 
-    int32_t angle_abs_total_reduced_int32 = (int32_t)high_accuracy[4] | (int32_t)high_accuracy[5] << 8 | (int32_t)high_accuracy[6] << 16 | (int32_t)high_accuracy[7] << 24;
-    // 反馈的就是已经减速后的数据！
-    instance->fb_data_.angle_fb_total_reduced_rad_ = (float)angle_abs_total_reduced_int32 * MOTOR_RMD_V2_X6_MULTI_ROUNDS_ANGLE_PRECISION_DEG * DEG_TO_RAD;
-    // X6 似乎没有转子单圈角反馈，这里暂时用推算出来转子总角度
+    int16_t angle_reduced_raw_int16 = (int16_t)low_accuracy[6] | (int16_t)low_accuracy[7] << 8;
+    instance->fb_data_.angle_fb_total_reduced_rad_ = (float)angle_reduced_raw_int16 * DEG_TO_RAD;
+    if (use_high_accuracy_angle == true && high_accuracy != NULL) {
+        instance->fb_data_.angle_fb_total_reduced_rad_ =
+            motorRMDV2X6ParseHighAccuracyAngleTotalReducedRad(high_accuracy);
+    }
     instance->fb_data_.angle_fb_total_rad_ = instance->reduction_ratio_ * instance->fb_data_.angle_fb_total_reduced_rad_;
-    // X6 似乎没有转子单圈角反馈，这里暂时用推算出来转子的单圈包角作为代替
-    // 请注意这里的范围是(-pi, pi]
     instance->fb_data_.angle_fb_rad_ = mathAngleWrapPi(instance->fb_data_.angle_fb_total_rad_);
 
     int16_t dps_reduced_raw_int16 = (int16_t)low_accuracy[4] | (int16_t)low_accuracy[5] << 8;
@@ -247,8 +309,7 @@ static bool decodeFeedbackDataFromRaw(motorRMDV2X6Instance_t *instance, const ui
 
     instance->fb_data_.temperature_c_ = (float)((int8_t)low_accuracy[1]);
 
-    // 取最旧的时间戳
-    instance->fb_data_.timestamp_us_ = low_accuracy_timestamp_us < high_accuracy_timestamp_us ? low_accuracy_timestamp_us : high_accuracy_timestamp_us;
+    instance->fb_data_.timestamp_us_ = low_accuracy_timestamp_us;
 
     return true;
 }
@@ -327,24 +388,23 @@ motorStatus_e motorRMDV2X6UpdateFeedbackData(motorRMDV2X6Instance_t *instance)
 
     bspCriticalExit(irq_state);
 
-    // 只要低精度/高精度有一个是新的，就进行数据解析
-    // 注意实际上这样子简单的进行数据解析可能造成严重问题，比如角度数据太旧或者角度、速度不匹配
     if ((data_low_accuracy_raw_is_new == true || data_high_accuracy_raw_is_new == true) &&
-        rawDataIsValid(data_low_accuracy_raw_timestamp_us) == true &&
-        rawDataIsValid(data_high_accuracy_raw_timestamp_us) == true) {
+        rawDataIsValid(data_low_accuracy_raw_timestamp_us) == true) {
+        bool use_high_accuracy_angle = false;
+        if (instance->abs_time_us_callback_ != NULL &&
+            rawDataIsFresh(data_high_accuracy_raw_timestamp_us,
+                           instance->abs_time_us_callback_(),
+                           instance->fb_abs_angle_high_accuracy_timeout_us_) == true) {
+            use_high_accuracy_angle = true;
+        }
         if (decodeFeedbackDataFromRaw(instance,
                                       data_low_accuracy_raw,
-                                      data_high_accuracy_raw,
                                       data_low_accuracy_raw_timestamp_us,
-                                      data_high_accuracy_raw_timestamp_us) == false) {
+                                      data_high_accuracy_raw,
+                                      use_high_accuracy_angle) == false) {
             return MOTOR_ERROR;
         }
         feedback_is_updated = true;
-    }
-
-    motorStatus_e request_status = motorRMDV2X6SendReadMultiRoundsAngleCommand(instance);
-    if (request_status != MOTOR_OK && request_status != MOTOR_TX_FAILURE) {
-        return request_status;
     }
 
     return feedback_is_updated == true ? MOTOR_OK : MOTOR_NO_NEW_DATA;
@@ -365,8 +425,7 @@ motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, moto
     }
 
     uint64_t now_us = instance->abs_time_us_callback_();
-    // 如果高精度角度数据太旧，返回错误
-    // 其实降级处理而不是直接返回错误比较好
+    // 主闭环仍以 A1 状态新鲜度为基础；高精度角若掉线则自动退回低精度角。
     if (rawDataIsFresh(instance->fb_data_.timestamp_us_,
                        now_us,
                        instance->fb_abs_angle_high_accuracy_timeout_us_) == false) {
@@ -377,6 +436,41 @@ motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, moto
 
     return MOTOR_OK;
 }
+
+motorStatus_e motorRMDV2X6GetHighAccuracyAngleDebugData(motorRMDV2X6Instance_t *instance,
+                                                        motorRMDV2X6HighAccuracyAngleDebugData_t *data_out)
+{
+    uint8_t high_accuracy_raw[MOTOR_RMD_V2_X6_CAN_RX_DLC];
+    uint64_t high_accuracy_timestamp_us;
+    bspCriticalIRQState_t irq_state;
+
+    if (instance == NULL || data_out == NULL) {
+        return MOTOR_ERROR;
+    }
+
+    irq_state = bspCriticalEnter();
+    memcpy(high_accuracy_raw, instance->fb_abs_angle_high_accuracy_raw_, MOTOR_RMD_V2_X6_CAN_RX_DLC);
+    high_accuracy_timestamp_us = instance->fb_abs_angle_high_accuracy_raw_timestamp_us_;
+    bspCriticalExit(irq_state);
+
+    if (rawDataIsValid(high_accuracy_timestamp_us) == false) {
+        return MOTOR_NO_NEW_DATA;
+    }
+
+    data_out->timestamp_us_ = high_accuracy_timestamp_us;
+    data_out->angle_fb_total_reduced_rad_ = motorRMDV2X6ParseHighAccuracyAngleTotalReducedRad(high_accuracy_raw);
+    data_out->angle_fb_total_rad_ = data_out->angle_fb_total_reduced_rad_ * instance->reduction_ratio_;
+
+    return MOTOR_OK;
+}
+
+motorStatus_e motorRMDV2X6SetHighAccuracyAngleActiveReplyDebug(motorRMDV2X6Instance_t *instance,
+                                                               bool enable,
+                                                               uint16_t reply_interval_10ms)
+{
+    return motorRMDV2X6SetReadMultiRoundsAngleActiveReply(instance, enable, reply_interval_10ms);
+}
+
 #if MOTOR_RMD_V2_X6_ENABLE_CAN_ID_CONFIG
 motorStatus_e motorRMDV2X6SetSingleMotorCANID(bspCANInstance_t *can_instance, uint16_t can_id)
 {

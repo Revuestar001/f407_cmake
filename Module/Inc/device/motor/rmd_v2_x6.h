@@ -27,6 +27,13 @@ typedef enum
 typedef uint64_t (*motorRMDV2X6GetAbsTimeUs_f)(void);
 typedef struct motor_rmd_v2_x6_instance motorRMDV2X6Instance_t;
 
+typedef struct motor_rmd_v2_x6_high_accuracy_angle_debug_data
+{
+    uint64_t timestamp_us_;
+    float angle_fb_total_reduced_rad_;
+    float angle_fb_total_rad_;
+} motorRMDV2X6HighAccuracyAngleDebugData_t;
+
 typedef struct motor_rmd_v2_x6_config
 {
     bspCANInstance_t *can_instance_;
@@ -48,10 +55,17 @@ bool motorRMDV2X6SetEffortRef(motorRMDV2X6Instance_t *instance, float effort_ref
 bool motorRMDV2X6SetWorkStatus(motorRMDV2X6Instance_t *instance, motorWorkStatus_e work_status);
 // 只发送力矩闭环控制报文
 motorStatus_e motorRMDV2X6SendEffortCommand(const motorRMDV2X6Instance_t *instance);
-// 解析已到达的反馈，并在内部请求下一次高精度多圈角度反馈
+// 解析 A1 低精度反馈与 0x92 主动上报的高精度多圈角，高精度角优先、低精度角兜底
 motorStatus_e motorRMDV2X6UpdateFeedbackData(motorRMDV2X6Instance_t *instance);
-// 获取当前缓存的统一反馈；若缓存尚未初始化或已超时，返回非 MOTOR_OK
+// 获取当前缓存的统一反馈；若 A1 状态缓存尚未初始化或已超时，返回非 MOTOR_OK
 motorStatus_e motorRMDV2X6GetFeedbackData(motorRMDV2X6Instance_t *instance, motorFeedBackData_t *data_out);
+// 调试接口：直接读取当前最近一次 0x92 高精度多圈角缓存，不依赖 A1 状态是否存在
+motorStatus_e motorRMDV2X6GetHighAccuracyAngleDebugData(motorRMDV2X6Instance_t *instance,
+                                                        motorRMDV2X6HighAccuracyAngleDebugData_t *data_out);
+// 调试接口：显式配置 0xB6 -> 0x92 主动回复，reply_interval_10ms 的单位是 10ms
+motorStatus_e motorRMDV2X6SetHighAccuracyAngleActiveReplyDebug(motorRMDV2X6Instance_t *instance,
+                                                               bool enable,
+                                                               uint16_t reply_interval_10ms);
 
 #if MOTOR_RMD_V2_X6_ENABLE_CAN_ID_CONFIG
 // 独立于当前驱动实例逻辑的单电机 CAN ID 设置 utility。
@@ -60,4 +74,5 @@ motorStatus_e motorRMDV2X6SetSingleMotorCANID(bspCANInstance_t *can_instance, ui
 #endif
 
 
+// 调试/兜底接口：主动请求一次高精度多圈角，主流程优先使用 0xB6 配置的主动上报
 motorStatus_e motorRMDV2X6SendReadMultiRoundsAngleCommand(const motorRMDV2X6Instance_t *instance);
