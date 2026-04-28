@@ -25,10 +25,7 @@ typedef struct app_remote_control
     StreamBufferHandle_t stream_buffer_handle_;
     QueueHandle_t command_queue_handle_;
 
-    // 统计丢失数据次数和字节数
-    volatile uint32_t stream_buffer_drop_count_;
-    volatile uint32_t stream_buffer_drop_bytes_;
-
+    appRemoteControlStats_t stats_;
     protocolSBUSDataPraser_t sbus_praser_;
     appRemoteControlOutput_t output_;
     TickType_t last_valid_frame_tick_; // 记录上一次有效帧的timetick
@@ -37,6 +34,11 @@ typedef struct app_remote_control
 static appRemoteControlInstance_t app_rc_instance_ = {0};
 static appRemoteControlCommand_t appRemoteControlBuildCommand(const appRemoteControlOutput_t *output);
 static void appRemoteControlPublishCommand(const appRemoteControlOutput_t *output);
+static uint32_t appRemoteControlCalcPermille(uint32_t numerator, uint32_t denominator);
+static void appRemoteControlRefreshStatsDerived(appRemoteControlStats_t *stats);
+static void appRemoteControlRecordValidSBUSFrame(const protocolSBUSDataFrame_t *sbus_frame);
+static void appRemoteControlRecordSBUSParseError(void);
+static void appRemoteControlHandleUARTError(void *owner_ptr);
 
 // stream buffer
 // 请注意，stream buffer的大小+2(stream buffer实际容量)不能比底层bsp_uart的DMA缓冲区小，否则会造成字节丢失
@@ -50,6 +52,67 @@ static StaticQueue_t command_queue_struct_;
 #define APP_REMOTE_CONTROL_MAX_UPDATE_WAIT_MS 10U // 最低更新频率
 #define APP_REMOTE_CONTROL_LOST_TIMEOUT_MS 50U // 认为RC LOST的超时时间，不要太小可能导致误判，请注意这个是指解析到两个完整25字节有效SBUS帧之间的时间，不是指frame_lost_flag
 #define APP_REMOTE_CONTROL_COMMAND_QUEUE_LENGTH 1U
+
+static uint32_t appRemoteControlCalcPermille(uint32_t numerator, uint32_t denominator)
+{
+    if (denominator == 0U) {
+        return 0U;
+    }
+
+    return (uint32_t)((((uint64_t)numerator) * 1000U) / denominator);
+}
+
+static void appRemoteControlRefreshStatsDerived(appRemoteControlStats_t *stats)
+{
+    uint32_t sbus_frame_attempt_count;
+
+    if (stats == NULL) {
+        return;
+    }
+
+    sbus_frame_attempt_count = stats->sbus_valid_frame_count_ + stats->sbus_parse_error_count_;
+    stats->sbus_frame_lost_flag_permille_ = appRemoteControlCalcPermille(stats->sbus_frame_lost_flag_count_,
+                                                                         stats->sbus_valid_frame_count_);
+    stats->sbus_failsafe_permille_ = appRemoteControlCalcPermille(stats->sbus_failsafe_count_,
+                                                                  stats->sbus_valid_frame_count_);
+    stats->sbus_parse_error_permille_ = appRemoteControlCalcPermille(stats->sbus_parse_error_count_,
+                                                                     sbus_frame_attempt_count);
+    stats->stream_buffer_drop_permille_ = appRemoteControlCalcPermille(stats->stream_buffer_drop_bytes_,
+                                                                       stats->uart_rx_total_bytes_);
+}
+
+static void appRemoteControlRecordValidSBUSFrame(const protocolSBUSDataFrame_t *sbus_frame)
+{
+    if (sbus_frame == NULL) {
+        return;
+    }
+
+    app_rc_instance_.stats_.sbus_valid_frame_count_++;
+    if (sbus_frame->frame_lost_flag_ != false) {
+        app_rc_instance_.stats_.sbus_frame_lost_flag_count_++;
+    }
+    if (sbus_frame->failsafe_activate_flag_ != false) {
+        app_rc_instance_.stats_.sbus_failsafe_count_++;
+    }
+
+    appRemoteControlRefreshStatsDerived(&app_rc_instance_.stats_);
+}
+
+static void appRemoteControlRecordSBUSParseError(void)
+{
+    app_rc_instance_.stats_.sbus_parse_error_count_++;
+}
+
+static void appRemoteControlHandleUARTError(void *owner_ptr)
+{
+    appRemoteControlInstance_t *instance = (appRemoteControlInstance_t *)owner_ptr;
+
+    if (instance == NULL) {
+        return;
+    }
+
+    instance->stats_.uart_error_count_++;
+}
 
 static appRemoteControlState_e appRemoteControlGetStateFromSBUSFrame(const protocolSBUSDataFrame_t *sbus_frame)
 {
@@ -123,11 +186,13 @@ static void appRemoteControlSendSegmentToBufferFromISR(appRemoteControlInstance_
                                           &rx_buffer_ptr[rx_data_start_index],
                                           bytes_to_send,
                                           xHigherPriorityTaskWoken);
+    instance->stats_.uart_rx_total_bytes_ += (uint32_t)bytes_to_send;
+    instance->stats_.stream_buffer_accept_bytes_ += (uint32_t)bytes_sent;
 
     // 发送数据丢失，即中断中向streambuffer写入bytes_to_send字节，但实际只写入bytes_sent字节，说明容量不够
     if (bytes_sent < bytes_to_send) {
-        instance->stream_buffer_drop_count_++;
-        instance->stream_buffer_drop_bytes_ += (uint32_t)(bytes_to_send - bytes_sent);
+        instance->stats_.stream_buffer_drop_count_++;
+        instance->stats_.stream_buffer_drop_bytes_ += (uint32_t)(bytes_to_send - bytes_sent);
     }
 }
 
@@ -212,6 +277,9 @@ static bool appRemoteControlInit(void)
     bspUARTRxEventCallbackRegister(app_rc_instance_.uart_instance_,
                                    (void *)&app_rc_instance_,
                                    appRemoteControlSendDataToBuffer);
+    bspUARTErrorCallbackRegister(app_rc_instance_.uart_instance_,
+                                 (void *)&app_rc_instance_,
+                                 appRemoteControlHandleUARTError);
     if (bspUARTRxStart(app_rc_instance_.uart_instance_) != BSP_UART_OK) {
         return false;
     }
@@ -226,7 +294,6 @@ static bool appRemoteControlUpdate(TickType_t timeout_tick)
     uint8_t rx_buffer[UPDATE_TEMP_BUFFER_SIZE] = {0};
     uint16_t rx_data_length_actual = 0U;
     protocolSBUSDataFrame_t rx_sbus_frame;
-    protocolSBUSFeedResult_e feed_result;
     // 这个读取也许要加临界区？似乎没有很大的必要
     appRemoteControlOutput_t output = app_rc_instance_.output_;
     bool received_valid_frame = false;
@@ -249,15 +316,19 @@ static bool appRemoteControlUpdate(TickType_t timeout_tick)
             break;
         }
 
-        feed_result = protocolSBUSPraserFeedBufferLastFrame(&app_rc_instance_.sbus_praser_,
-                                                            rx_buffer,
-                                                            rx_data_length_actual,
-                                                            &rx_sbus_frame);
-        if (feed_result == PROTOCOL_SBUS_FEED_FRAME_OK) {
-            moduleRCMapperUpdateFromSBUSFrame(&output.rc_mapper_, &rx_sbus_frame);
-            output.state_ = appRemoteControlGetStateFromSBUSFrame(&rx_sbus_frame);
-            app_rc_instance_.last_valid_frame_tick_ = xTaskGetTickCount();
-            received_valid_frame = true;
+        for (uint16_t i = 0; i < rx_data_length_actual; i++) {
+            protocolSBUSFeedResult_e feed_result = protocolSBUSPraserFeedByte(&app_rc_instance_.sbus_praser_,
+                                                                              rx_buffer[i],
+                                                                              &rx_sbus_frame);
+            if (feed_result == PROTOCOL_SBUS_FEED_FRAME_OK) {
+                appRemoteControlRecordValidSBUSFrame(&rx_sbus_frame);
+                moduleRCMapperUpdateFromSBUSFrame(&output.rc_mapper_, &rx_sbus_frame);
+                output.state_ = appRemoteControlGetStateFromSBUSFrame(&rx_sbus_frame);
+                app_rc_instance_.last_valid_frame_tick_ = xTaskGetTickCount();
+                received_valid_frame = true;
+            } else if (feed_result == PROTOCOL_SBUS_FEED_FRAME_ERROR) {
+                appRemoteControlRecordSBUSParseError();
+            }
         }
 
         // 第一次读取后，之后都不阻塞读取
@@ -272,6 +343,9 @@ static bool appRemoteControlUpdate(TickType_t timeout_tick)
 
     if (received_valid_frame == false &&
         appRemoteControlIsFrameExpired(pdMS_TO_TICKS(APP_REMOTE_CONTROL_LOST_TIMEOUT_MS)) == true) {
+        if (output.state_ != APP_REMOTE_CONTROL_STATE_LOST) {
+            app_rc_instance_.stats_.output_lost_timeout_count_++;
+        }
         appRemoteControlSetOutputLost(&output);
         appRemoteControlUpdateOutput(&output);
         appRemoteControlPublishCommand(&output);
@@ -358,6 +432,27 @@ bool appRemoteControlReceiveCommand(appRemoteControlCommand_t *command_out, uint
     return xQueueReceive(app_rc_instance_.command_queue_handle_,
                          command_out,
                          (TickType_t)timeout_tick) == pdPASS;
+}
+
+bool appRemoteControlGetStats(appRemoteControlStats_t *stats_out)
+{
+    if (stats_out == NULL) {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    *stats_out = app_rc_instance_.stats_;
+    taskEXIT_CRITICAL();
+
+    appRemoteControlRefreshStatsDerived(stats_out);
+    return true;
+}
+
+void appRemoteControlResetStats(void)
+{
+    taskENTER_CRITICAL();
+    app_rc_instance_.stats_ = (appRemoteControlStats_t){0};
+    taskEXIT_CRITICAL();
 }
 
 void appRemoteControlTaskEntry(void *argument)
