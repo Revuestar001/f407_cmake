@@ -79,6 +79,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Src/imu/app_imu.c
     Application/Src/ins/app_ins.c
     Application/Src/chassis/app_chassis.c
+    Application/Src/app_topic_bus_test.c
     Application/Src/topics/app_topics.c
 )
 

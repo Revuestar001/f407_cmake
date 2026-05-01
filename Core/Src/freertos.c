@@ -28,6 +28,8 @@
 #include "app_remote_control.h"
 #include "app_ins.h"
 #include "app_chassis.h"
+#include "app_topic_bus_test.h"
+#include "user_def.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -70,6 +72,36 @@ const osThreadAttr_t chassisTask_attributes = {
   .priority = (osPriority_t) osPriorityHigh,
 };
 
+#if USER_TOPIC_BUS_TEST_ENABLE
+osThreadId_t topicBusTestPublisherTaskHandle;
+const osThreadAttr_t topicBusTestPublisherTask_attributes = {
+  .name = "topicBusPub_",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+
+osThreadId_t topicBusTestCmdFastTaskHandle;
+const osThreadAttr_t topicBusTestCmdFastTask_attributes = {
+  .name = "topicBusCmdF",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+
+osThreadId_t topicBusTestCmdSlowTaskHandle;
+const osThreadAttr_t topicBusTestCmdSlowTask_attributes = {
+  .name = "topicBusCmdS",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+
+osThreadId_t topicBusTestStateTaskHandle;
+const osThreadAttr_t topicBusTestStateTask_attributes = {
+  .name = "topicBusSt_",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+#endif
+
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -84,6 +116,12 @@ const osThreadAttr_t defaultTask_attributes = {
 void StartRemoteControlTask(void *argument);
 void StartINSTask(void *argument);
 void StartChassisTask(void *argument);
+#if USER_TOPIC_BUS_TEST_ENABLE
+void StartTopicBusTestPublisherTask(void *argument);
+void StartTopicBusTestCommandFastSubscriberTask(void *argument);
+void StartTopicBusTestCommandSlowSubscriberTask(void *argument);
+void StartTopicBusTestStateSubscriberTask(void *argument);
+#endif
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -125,6 +163,12 @@ void MX_FREERTOS_Init(void) {
   remoteControlTaskHandle = osThreadNew(StartRemoteControlTask, NULL, &remoteControlTask_attributes);
   appINSTaskHandle = osThreadNew(StartINSTask, NULL, &insTask_attributes);
   appChassisTaskHandle = osThreadNew(StartChassisTask, NULL, &chassisTask_attributes);
+#if USER_TOPIC_BUS_TEST_ENABLE
+  topicBusTestPublisherTaskHandle = osThreadNew(StartTopicBusTestPublisherTask, NULL, &topicBusTestPublisherTask_attributes);
+  topicBusTestCmdFastTaskHandle = osThreadNew(StartTopicBusTestCommandFastSubscriberTask, NULL, &topicBusTestCmdFastTask_attributes);
+  topicBusTestCmdSlowTaskHandle = osThreadNew(StartTopicBusTestCommandSlowSubscriberTask, NULL, &topicBusTestCmdSlowTask_attributes);
+  topicBusTestStateTaskHandle = osThreadNew(StartTopicBusTestStateSubscriberTask, NULL, &topicBusTestStateTask_attributes);
+#endif
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -167,5 +211,27 @@ void StartChassisTask(void *argument)
 {
   appChassisTaskEntry(argument);
 }
+
+#if USER_TOPIC_BUS_TEST_ENABLE
+void StartTopicBusTestPublisherTask(void *argument)
+{
+  appTopicBusTestPublisherTaskEntry(argument);
+}
+
+void StartTopicBusTestCommandFastSubscriberTask(void *argument)
+{
+  appTopicBusTestCommandFastSubscriberTaskEntry(argument);
+}
+
+void StartTopicBusTestCommandSlowSubscriberTask(void *argument)
+{
+  appTopicBusTestCommandSlowSubscriberTaskEntry(argument);
+}
+
+void StartTopicBusTestStateSubscriberTask(void *argument)
+{
+  appTopicBusTestStateSubscriberTaskEntry(argument);
+}
+#endif
 /* USER CODE END Application */
 
