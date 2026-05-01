@@ -1,0 +1,15 @@
+#pragma once
+
+typedef enum
+{
+    APP_REMOTE_CONTROL_STATE_LOST = 0,
+    APP_REMOTE_CONTROL_STATE_CONTROL,
+    APP_REMOTE_CONTROL_STATE_FAILSAFE
+} appRemoteControlState_e;
+
+typedef enum
+{
+    APP_REMOTE_CONTROL_DRIVE_MODE_MANUAL = 0,
+    APP_REMOTE_CONTROL_DRIVE_MODE_ASSIST,
+    APP_REMOTE_CONTROL_DRIVE_MODE_AUTO
+} appRemoteControlDriveMode_e;

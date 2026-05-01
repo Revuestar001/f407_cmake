@@ -2,19 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-typedef enum
-{
-    APP_REMOTE_CONTROL_STATE_LOST = 0,
-    APP_REMOTE_CONTROL_STATE_CONTROL,
-    APP_REMOTE_CONTROL_STATE_FAILSAFE
-} appRemoteControlState_e;
-
-typedef enum
-{
-    APP_REMOTE_CONTROL_DRIVE_MODE_MANUAL = 0,
-    APP_REMOTE_CONTROL_DRIVE_MODE_ASSIST,
-    APP_REMOTE_CONTROL_DRIVE_MODE_AUTO
-} appRemoteControlDriveMode_e;
+#include "app_remote_control_def.h"
 
 // 指令结构体
 typedef struct app_remote_control_command

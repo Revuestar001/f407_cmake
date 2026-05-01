@@ -73,11 +73,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/algorithm/eskf/error_state_kalman_filter.c
     Module/Src/algorithm/pid/pid.c
     Module/Src/algorithm/filter/1st_order_lp_filter.c
+    Module/Src/topic_bus/topic_bus.c
 
     Application/Src/remote_control/app_remote_control.c
     Application/Src/imu/app_imu.c
     Application/Src/ins/app_ins.c
     Application/Src/chassis/app_chassis.c
+    Application/Src/topics/app_topics.c
 )
 
 # Add include paths
@@ -103,11 +105,14 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/algorithm/eskf/
     Module/Inc/algorithm/pid/
     Module/Inc/algorithm/filter/
+    Module/Inc/topic_bus/
 
     Application/Inc/remote_control/
     Application/Inc/imu/
     Application/Inc/ins/
     Application/Inc/chassis/
+    Application/Inc/topics/
+    Application/Inc/messages/
     Application/Inc/
 )
 
