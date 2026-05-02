@@ -19,6 +19,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
+#include "cmsis_os2.h"
 #include "task.h"
 #include "main.h"
 #include "cmsis_os.h"
@@ -77,7 +78,7 @@ osThreadId_t topicBusTestPublisherTaskHandle;
 const osThreadAttr_t topicBusTestPublisherTask_attributes = {
   .name = "topicBusPub_",
   .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityHigh,
 };
 
 osThreadId_t topicBusTestCmdFastTaskHandle;
@@ -97,6 +98,13 @@ const osThreadAttr_t topicBusTestCmdSlowTask_attributes = {
 osThreadId_t topicBusTestStateTaskHandle;
 const osThreadAttr_t topicBusTestStateTask_attributes = {
   .name = "topicBusSt_",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+
+osThreadId_t topicBusTestStateAuxTaskHandle;
+const osThreadAttr_t topicBusTestStateAuxTask_attributes = {
+  .name = "topicBusAux",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
@@ -121,6 +129,7 @@ void StartTopicBusTestPublisherTask(void *argument);
 void StartTopicBusTestCommandFastSubscriberTask(void *argument);
 void StartTopicBusTestCommandSlowSubscriberTask(void *argument);
 void StartTopicBusTestStateSubscriberTask(void *argument);
+void StartTopicBusTestStateAuxSubscriberTask(void *argument);
 #endif
 /* USER CODE END FunctionPrototypes */
 
@@ -168,6 +177,7 @@ void MX_FREERTOS_Init(void) {
   topicBusTestCmdFastTaskHandle = osThreadNew(StartTopicBusTestCommandFastSubscriberTask, NULL, &topicBusTestCmdFastTask_attributes);
   topicBusTestCmdSlowTaskHandle = osThreadNew(StartTopicBusTestCommandSlowSubscriberTask, NULL, &topicBusTestCmdSlowTask_attributes);
   topicBusTestStateTaskHandle = osThreadNew(StartTopicBusTestStateSubscriberTask, NULL, &topicBusTestStateTask_attributes);
+  topicBusTestStateAuxTaskHandle = osThreadNew(StartTopicBusTestStateAuxSubscriberTask, NULL, &topicBusTestStateAuxTask_attributes);
 #endif
   /* USER CODE END RTOS_THREADS */
 
@@ -231,6 +241,11 @@ void StartTopicBusTestCommandSlowSubscriberTask(void *argument)
 void StartTopicBusTestStateSubscriberTask(void *argument)
 {
   appTopicBusTestStateSubscriberTaskEntry(argument);
+}
+
+void StartTopicBusTestStateAuxSubscriberTask(void *argument)
+{
+  appTopicBusTestStateAuxSubscriberTaskEntry(argument);
 }
 #endif
 /* USER CODE END Application */

@@ -20,6 +20,9 @@ static moduleTopicSubscription_t *topic_bus_test_cmd_waiter_list_[MSG_TOPIC_BUS_
 static uint8_t topic_bus_test_state_buffer_[MSG_TOPIC_BUS_TEST_STATE_TOPIC_DEPTH * sizeof(msgTopicBusStateTest_t)] = {0};
 static moduleTopicSubscription_t *topic_bus_test_state_waiter_list_[MSG_TOPIC_BUS_TEST_STATE_TOPIC_MAX_WAITER] = {NULL};
 
+static uint8_t topic_bus_test_state_aux_buffer_[MSG_TOPIC_BUS_TEST_STATE_AUX_TOPIC_DEPTH * sizeof(msgTopicBusStateTest_t)] = {0};
+static moduleTopicSubscription_t *topic_bus_test_state_aux_waiter_list_[MSG_TOPIC_BUS_TEST_STATE_AUX_TOPIC_MAX_WAITER] = {NULL};
+
 // 全部为编译期已知
 static moduleTopic_t topic_memory_[APP_TOPICS_MAX] = {
     [APP_TOPICS_RC_COMMAND] = {
@@ -65,6 +68,17 @@ static moduleTopic_t topic_memory_[APP_TOPICS_MAX] = {
         .waiter_count_ = 0U,
         .waiter_list_capacity_ = MSG_TOPIC_BUS_TEST_STATE_TOPIC_MAX_WAITER,
         .topic_name_ = MSG_TOPIC_BUS_TEST_STATE_TOPIC_NAME,
+    },
+    [APP_TOPICS_TOPIC_BUS_TEST_STATE_AUX] = {
+        .msg_size_ = sizeof(msgTopicBusStateTest_t),
+        .depth_ = MSG_TOPIC_BUS_TEST_STATE_AUX_TOPIC_DEPTH,
+        .buffer_ = topic_bus_test_state_aux_buffer_,
+        .publish_seq_num_ = 0U,
+        .publish_index_ = 0U,
+        .waiter_list_ = topic_bus_test_state_aux_waiter_list_,
+        .waiter_count_ = 0U,
+        .waiter_list_capacity_ = MSG_TOPIC_BUS_TEST_STATE_AUX_TOPIC_MAX_WAITER,
+        .topic_name_ = MSG_TOPIC_BUS_TEST_STATE_AUX_TOPIC_NAME,
     },
 };
 

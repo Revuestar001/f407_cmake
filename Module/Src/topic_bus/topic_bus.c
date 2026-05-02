@@ -203,8 +203,12 @@ bool moduleTopicBusCopy(moduleTopicSubscription_t *subscriber, void *message_out
 }
 
 // 等待话题发布新数据，请注意，只有当有新数据时才返回true
+// 请注意，timeout_ticks就是这个API的总阻塞时间
 bool moduleTopicBusWait(moduleTopicSubscription_t *subscriber, TickType_t timeout_ticks)
 {
+    TimeOut_t timeout_state;
+    TickType_t remain_ticks = timeout_ticks;
+
     if (subscriber == NULL) {
         return false;
     }
@@ -213,12 +217,16 @@ bool moduleTopicBusWait(moduleTopicSubscription_t *subscriber, TickType_t timeou
         return false;
     }
 
-    // 先检查该话题是否有更新
+    // 先检查该话题是否已有更新，避免无意义阻塞
     if (moduleTopicBusUpdated(subscriber) == true) {
         return true;
     }
 
-    switch (subscriber->wait_backend_) {
+    // 记录开始等待的时间点
+    vTaskSetTimeOutState(&timeout_state);
+
+    while (moduleTopicBusUpdated(subscriber) == false) {
+        switch (subscriber->wait_backend_) {
         case MODULE_TOPIC_WAIT_TASK_NOTIFY:
             if (subscriber->wait_handle_.wait_task_ == NULL) {
                 return false;
@@ -228,8 +236,8 @@ bool moduleTopicBusWait(moduleTopicSubscription_t *subscriber, TickType_t timeou
                 // 如果当前任务不是订阅者等待任务，直接返回
                 return false;
             }
-            // 还没有更新，开始按照超时时间等待
-            if (ulTaskNotifyTake(pdTRUE, timeout_ticks) == 0U) {
+            // 使用剩余的阻塞事件等待
+            if (ulTaskNotifyTake(pdTRUE, remain_ticks) == 0U) {
                 // 获取任务通知超时
                 return false;
             }
@@ -238,17 +246,26 @@ bool moduleTopicBusWait(moduleTopicSubscription_t *subscriber, TickType_t timeou
             if (subscriber->wait_handle_.wait_sem_ == NULL) {
                 return false;
             }
-            // 还没有更新，开始按照超时时间等待
-            if (xSemaphoreTake(subscriber->wait_handle_.wait_sem_, timeout_ticks) != pdTRUE) {
-                // 获取任务通知超时
+            // 使用剩余的阻塞事件等待
+            if (xSemaphoreTake(subscriber->wait_handle_.wait_sem_, remain_ticks) != pdTRUE) {
+                // 获取信号量超时
                 return false;
             }
             break;
         case MODULE_TOPIC_WAIT_NONE:
         default:
             return false;
+        }
+
+        // 被成功唤醒，重新检查话题是否更新，因为这个唤醒可能也是旧的
+        if (moduleTopicBusUpdated(subscriber) == true) {
+            return true;
+        }
+        // 检查从开始等待到现在，总等待时间有没有超过 remain_ticks
+        if (xTaskCheckForTimeOut(&timeout_state, &remain_ticks) != pdFALSE) {
+            return false;
+        }
     }
 
-    // 收到通知，再检查一次是否更新
-    return moduleTopicBusUpdated(subscriber);
+    return true;
 }
