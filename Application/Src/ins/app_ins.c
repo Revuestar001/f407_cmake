@@ -22,6 +22,10 @@
 #include "app_ins.h"
 #include "app_def.h"
 
+#include "topic_bus.h"
+#include "app_topics.h"
+#include "msg_ins.h"
+
 #define APP_INS_CALIB_IMU_ACCEL_TOLERANCE_MS2 (0.1f * STANDARD_GRAVITY_M_S2) // 用于判断IMU是否静止
 #define APP_INS_CALIB_IMU_WARM_UP_TIME_MS 500U
 #define APP_INS_CALIB_IMU_GYRO_BIAS_SAMPLE_COUNT 1200U
@@ -1033,6 +1037,15 @@ void appINSTaskEntry(void *argument)
                 app_ins_.error_count_++;
                 app_ins_.stage_ = APP_INS_DEGRADED;
             }
+        }
+
+        msgINS_t msg;
+        msg.timestamp_ = app_ins_.data_.timestamp_;
+        memcpy(msg.euler_zyx_deg_, app_ins_.data_.euler_zyx_deg_, sizeof(float) * 3U);
+        memcpy(msg.quat_, app_ins_.data_.quat_, sizeof(float) * 4U);
+        memcpy(msg.gyro_bias_rads_, app_ins_.data_.gyro_bias_rads_, sizeof(float) * 3U);
+        if (moduleTopicBusPublish(appTopicsGet(APP_TOPICS_INS), &msg) == false) {
+            app_ins_.error_count_++;
         }
 
         ins_loop_time = bspDWTGetElapsedTimeUs(start_cnt);

@@ -81,6 +81,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Src/chassis/app_chassis.c
     Application/Src/app_topic_bus_test.c
     Application/Src/topics/app_topics.c
+    Application/Src/log/app_log.c
 )
 
 # Add include paths
@@ -114,6 +115,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Inc/chassis/
     Application/Inc/topics/
     Application/Inc/messages/
+    Application/Inc/log/
     Application/Inc/
 )
 

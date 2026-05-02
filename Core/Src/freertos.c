@@ -19,7 +19,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "cmsis_os2.h"
 #include "task.h"
 #include "main.h"
 #include "cmsis_os.h"
@@ -30,6 +29,7 @@
 #include "app_ins.h"
 #include "app_chassis.h"
 #include "app_topic_bus_test.h"
+#include "app_log.h"
 #include "user_def.h"
 /* USER CODE END Includes */
 
@@ -71,6 +71,13 @@ const osThreadAttr_t chassisTask_attributes = {
   .name = "chassisTask_",
   .stack_size = 256 * 8,
   .priority = (osPriority_t) osPriorityHigh,
+};
+
+osThreadId_t appLogTaskHandle;
+const osThreadAttr_t appLogTask_attributes = {
+  .name = "logTask_",
+  .stack_size = 256 * 8,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 
 #if USER_TOPIC_BUS_TEST_ENABLE
@@ -124,6 +131,7 @@ const osThreadAttr_t defaultTask_attributes = {
 void StartRemoteControlTask(void *argument);
 void StartINSTask(void *argument);
 void StartChassisTask(void *argument);
+void StartLogTask(void *argument);
 #if USER_TOPIC_BUS_TEST_ENABLE
 void StartTopicBusTestPublisherTask(void *argument);
 void StartTopicBusTestCommandFastSubscriberTask(void *argument);
@@ -172,6 +180,7 @@ void MX_FREERTOS_Init(void) {
   remoteControlTaskHandle = osThreadNew(StartRemoteControlTask, NULL, &remoteControlTask_attributes);
   appINSTaskHandle = osThreadNew(StartINSTask, NULL, &insTask_attributes);
   appChassisTaskHandle = osThreadNew(StartChassisTask, NULL, &chassisTask_attributes);
+  appLogTaskHandle = osThreadNew(StartLogTask, NULL, &appLogTask_attributes);
 #if USER_TOPIC_BUS_TEST_ENABLE
   topicBusTestPublisherTaskHandle = osThreadNew(StartTopicBusTestPublisherTask, NULL, &topicBusTestPublisherTask_attributes);
   topicBusTestCmdFastTaskHandle = osThreadNew(StartTopicBusTestCommandFastSubscriberTask, NULL, &topicBusTestCmdFastTask_attributes);
@@ -220,6 +229,11 @@ void StartINSTask(void *argument)
 void StartChassisTask(void *argument)
 {
   appChassisTaskEntry(argument);
+}
+
+void StartLogTask(void *argument)
+{
+  appLogTaskEntry(argument);
 }
 
 #if USER_TOPIC_BUS_TEST_ENABLE

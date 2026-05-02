@@ -110,7 +110,7 @@ static void bspBoardUARTInit()
 
     uart_config = bspBoardSetUARTConfig(&UART_PRINT, 
                                         BSP_UART_RX_MODE_DMA_IDLE, 
-                                        BSP_UART_TX_MODE_IT, 
+                                        BSP_UART_TX_MODE_DMA, 
                                         &bspUARTRxBuffer[BSP_UART_PRINT][0],
                                         BSP_UART_RX_BUFFER_SIZE, 
                                         "PRINT");
@@ -118,7 +118,7 @@ static void bspBoardUARTInit()
 
     uart_config = bspBoardSetUARTConfig(&UART_SBUS, 
                                         BSP_UART_RX_MODE_DMA_IDLE, 
-                                        BSP_UART_TX_MODE_IT, 
+                                        BSP_UART_TX_MODE_DMA, 
                                         &bspUARTRxBuffer[BSP_UART_SBUS][0],
                                         BSP_UART_RX_BUFFER_SIZE, 
                                         "SBUS");

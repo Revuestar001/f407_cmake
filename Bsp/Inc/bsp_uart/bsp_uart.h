@@ -20,6 +20,15 @@ typedef enum
     BSP_UART_RX_EVENT_INVALID
 } bspUARTRxEventType_e;
 
+typedef struct {
+    uint8_t *rx_buffer_ptr_;
+    uint16_t rx_buffer_size_;
+    uint16_t rx_data_start_index_;
+    uint16_t rx_data_end_pos_;
+    uint16_t rx_data_len_; // 本次接收数据长度，用于零拷贝
+    bspUARTRxEventType_e rx_event_;
+} bspUARTRxEventContext_t;
+
 // 结构体前向声明
 typedef struct uart_instance bspUARTInstance_t;
 typedef void (*bspUARTRxEventCallback_f)(void *owner_ptr, 

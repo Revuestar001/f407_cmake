@@ -58,9 +58,10 @@ void Error_Handler(void);
 
 /* Private defines -----------------------------------------------------------*/
 #define UART_SBUS huart3
-#define UART_PRINT huart1
+#define UART_ABORT huart1
 #define SPI_IMU hspi1
 #define I2C_MAG hi2c3
+#define UART_PRINT huart6
 #define RSTN_IST8310_Pin GPIO_PIN_6
 #define RSTN_IST8310_GPIO_Port GPIOG
 #define DRDY_IST8310_Pin GPIO_PIN_3
