@@ -26,7 +26,9 @@ typedef struct uart_instance
     bspUARTTxCpltCallback_f tx_cplt_callback_;
     bspUARTErrorCallback_f error_callback_;
 
-    void *owner_;
+    void *rx_owner_;
+    void *tx_owner_;
+    void *error_owner_;
 } bspUARTInstance_t;
 
 static uint8_t uart_memory_index_ = 0;
@@ -92,18 +94,18 @@ bspUARTInstance_t *bspUARTInit(const bspUARTConfig_t *config)
 void bspUARTRxEventCallbackRegister(bspUARTInstance_t *instance , void *owner_ptr, bspUARTRxEventCallback_f callback)
 {
     instance->rx_event_callback_ = callback;
-    instance->owner_ = owner_ptr;
+    instance->rx_owner_ = owner_ptr;
 }
 
 void bspUARTTxCpltCallbackRegister(bspUARTInstance_t *instance , void *owner_ptr, bspUARTTxCpltCallback_f callback)
 {
     instance->tx_cplt_callback_ = callback;
-    instance->owner_ = owner_ptr;
+    instance->tx_owner_ = owner_ptr;
 }
 void bspUARTErrorCallbackRegister(bspUARTInstance_t *instance , void *owner_ptr, bspUARTErrorCallback_f callback)
 {
     instance->error_callback_ = callback;
-    instance->owner_ = owner_ptr;
+    instance->error_owner_ = owner_ptr;
 }
 
 bspUARTStatus_e bspUARTRxStart(bspUARTInstance_t *instance)
@@ -197,7 +199,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
                         .rx_data_len_ = (rx_cur_pos < rx_last_pos) ? ((rx_buffer_size - rx_last_pos) + rx_cur_pos) : (rx_cur_pos - rx_last_pos),
                         .rx_event_ = rx_event,
                     };
-                    instance->rx_event_callback_(instance->owner_, &rx_context);  
+                    instance->rx_event_callback_(instance->rx_owner_, &rx_context);  
                 }    
             } else {
                 // rx_cur_pos = rx_last_pos
@@ -218,7 +220,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     for (size_t i = 0; i < uart_memory_index_; i ++) {
         if (uart_instance_memory_[i].uart_handle_ == huart) {
             if (uart_instance_memory_[i].tx_cplt_callback_ != NULL) {
-                uart_instance_memory_[i].tx_cplt_callback_(uart_instance_memory_[i].owner_);
+                uart_instance_memory_[i].tx_cplt_callback_(uart_instance_memory_[i].tx_owner_);
             }
             break;
         }
@@ -231,7 +233,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
         if (uart_instance_memory_[i].uart_handle_ == huart) {
             if (uart_instance_memory_[i].error_callback_ != NULL) {
                 // 为什么不直接 bspUARTRxStart()?
-                uart_instance_memory_[i].error_callback_(uart_instance_memory_[i].owner_);
+                uart_instance_memory_[i].error_callback_(uart_instance_memory_[i].error_owner_);
             }
             // 简单处理，重启接收
             bspUARTRxStart(&uart_instance_memory_[i]);

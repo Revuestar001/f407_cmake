@@ -30,6 +30,7 @@
 #include "app_chassis.h"
 #include "app_topic_bus_test.h"
 #include "app_log.h"
+#include "app_uart6_serial_stream_rx_test.h"
 #include "user_def.h"
 /* USER CODE END Includes */
 
@@ -79,6 +80,15 @@ const osThreadAttr_t appLogTask_attributes = {
   .stack_size = 256 * 8,
   .priority = (osPriority_t) osPriorityNormal,
 };
+
+#if USER_UART6_SERIAL_STREAM_RX_TEST_ENABLE
+osThreadId_t appUART6SerialStreamRxTestTaskHandle;
+const osThreadAttr_t appUART6SerialStreamRxTestTask_attributes = {
+  .name = "u6RxStrmT",
+  .stack_size = 256 * 8,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+#endif
 
 #if USER_TOPIC_BUS_TEST_ENABLE
 osThreadId_t topicBusTestPublisherTaskHandle;
@@ -132,6 +142,7 @@ void StartRemoteControlTask(void *argument);
 void StartINSTask(void *argument);
 void StartChassisTask(void *argument);
 void StartLogTask(void *argument);
+void StartUART6SerialStreamRxTestTask(void *argument);
 #if USER_TOPIC_BUS_TEST_ENABLE
 void StartTopicBusTestPublisherTask(void *argument);
 void StartTopicBusTestCommandFastSubscriberTask(void *argument);
@@ -181,6 +192,9 @@ void MX_FREERTOS_Init(void) {
   appINSTaskHandle = osThreadNew(StartINSTask, NULL, &insTask_attributes);
   appChassisTaskHandle = osThreadNew(StartChassisTask, NULL, &chassisTask_attributes);
   appLogTaskHandle = osThreadNew(StartLogTask, NULL, &appLogTask_attributes);
+#if USER_UART6_SERIAL_STREAM_RX_TEST_ENABLE
+  appUART6SerialStreamRxTestTaskHandle = osThreadNew(StartUART6SerialStreamRxTestTask, NULL, &appUART6SerialStreamRxTestTask_attributes);
+#endif
 #if USER_TOPIC_BUS_TEST_ENABLE
   topicBusTestPublisherTaskHandle = osThreadNew(StartTopicBusTestPublisherTask, NULL, &topicBusTestPublisherTask_attributes);
   topicBusTestCmdFastTaskHandle = osThreadNew(StartTopicBusTestCommandFastSubscriberTask, NULL, &topicBusTestCmdFastTask_attributes);
@@ -235,6 +249,13 @@ void StartLogTask(void *argument)
 {
   appLogTaskEntry(argument);
 }
+
+#if USER_UART6_SERIAL_STREAM_RX_TEST_ENABLE
+void StartUART6SerialStreamRxTestTask(void *argument)
+{
+  appUART6SerialStreamRxTestTaskEntry(argument);
+}
+#endif
 
 #if USER_TOPIC_BUS_TEST_ENABLE
 void StartTopicBusTestPublisherTask(void *argument)

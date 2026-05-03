@@ -83,6 +83,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Src/app_topic_bus_test.c
     Application/Src/topics/app_topics.c
     Application/Src/log/app_log.c
+    Application/Src/app_uart6_serial_stream_rx_test.c
 )
 
 # Add include paths

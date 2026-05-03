@@ -16,10 +16,17 @@
 #include "topic_bus.h"
 #include "app_topics.h"
 #include "msg_ins.h"
+#include "user_def.h"
 
 #define APP_LOG_BUFFER_SIZE 128U
 #define APP_LOG_TX_PERIOD_MS 100U
 #define APP_LOG_RX_SNAPSHOT_SIZE 16U
+
+#if USER_UART6_SERIAL_STREAM_RX_TEST_ENABLE
+#define APP_LOG_PRINT_UART_RX_DIAG_ENABLE 0U
+#else
+#define APP_LOG_PRINT_UART_RX_DIAG_ENABLE 1U
+#endif
 
 typedef struct app_log
 {
@@ -112,6 +119,7 @@ static int appLogFormatINSLine(char *buffer, size_t buffer_size, const msgINS_t 
                     (unsigned long)(yaw_abs_centi_deg % 100U));
 }
 
+#if APP_LOG_PRINT_UART_RX_DIAG_ENABLE
 static void appLogHandlePrintRxEvent(void *owner_ptr, const bspUARTRxEventContext_t *rx_context)
 {
     appLog_t *instance = (appLog_t *)owner_ptr;
@@ -162,6 +170,7 @@ static void appLogHandlePrintRxEvent(void *owner_ptr, const bspUARTRxEventContex
     instance->print_rx_last_span_bytes_ = total_bytes;
     instance->print_rx_last_bytes_count_ = snapshot_count;
 }
+#endif
 
 static void appLogHandleTxCplt(void *owner_ptr)
 {
@@ -196,13 +205,15 @@ static bool appLogInit(void)
         return false;
     }
 
-    bspUARTRxEventCallbackRegister(app_log_.print_uart_, (void *)&app_log_, appLogHandlePrintRxEvent);
     bspUARTTxCpltCallbackRegister(app_log_.print_uart_, (void *)&app_log_, appLogHandleTxCplt);
     bspUARTErrorCallbackRegister(app_log_.print_uart_, (void *)&app_log_, appLogHandleUARTError);
 
+#if APP_LOG_PRINT_UART_RX_DIAG_ENABLE
+    bspUARTRxEventCallbackRegister(app_log_.print_uart_, (void *)&app_log_, appLogHandlePrintRxEvent);
     if (bspUARTRxStart(app_log_.print_uart_) != BSP_UART_OK) {
         return false;
     }
+#endif
 
     app_log_.ins_wait_sem_ = xSemaphoreCreateBinaryStatic(&ins_wait_semphr_);
     if (app_log_.ins_wait_sem_ == NULL) {

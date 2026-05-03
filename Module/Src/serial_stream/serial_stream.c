@@ -37,7 +37,7 @@ static bool isNotifyBackendValid(moduleSerialStreamNotifyBackend_e notify_backen
     return false;
 }
 
-// 注意：backend_handle_ 是 union，必须结合 notify_backend_ 才能判断 Zero copy 的 handle 是否有效
+// backend_handle_ 是 union，必须结合 notify_backend_ 才能判断 zero copy 的接收通知句柄是否有效
 static bool isZeroCopyNotifyHandleValid(const moduleSerialStream_t *instance)
 {
     if (instance == NULL) {
@@ -58,7 +58,7 @@ static bool isZeroCopyNotifyHandleValid(const moduleSerialStream_t *instance)
     return false;
 }
 
-// 注意：backend_handle_ 是 union，必须结合 notify_backend_ 才能判断 Zero copy 的 config 是否有效
+// backend_handle_ 是 union，必须结合 notify_backend_ 才能判断 zero copy 的配置是否有效
 static bool isZeroCopyNotifyConfigValid(const moduleSerialStreamConfig_t *config)
 {
     if (config == NULL) {
@@ -79,8 +79,7 @@ static bool isZeroCopyNotifyConfigValid(const moduleSerialStreamConfig_t *config
     return false;
 }
 
-static void notifyZeroCopyReceiverFromISR(moduleSerialStream_t *instance,
-                                          BaseType_t *xHigherPriorityTaskWoken)
+static void notifyZeroCopyReceiverFromISR(moduleSerialStream_t *instance, BaseType_t *xHigherPriorityTaskWoken)
 {
     if (instance == NULL || xHigherPriorityTaskWoken == NULL) {
         return;
@@ -88,19 +87,17 @@ static void notifyZeroCopyReceiverFromISR(moduleSerialStream_t *instance,
 
     switch (instance->notify_backend_) {
         case MODULE_SERIAL_STREAM_NOTIFY_TASK:
-            if (instance->backend_handle_.task_notify_handle_ != NULL) {
-                vTaskNotifyGiveFromISR(instance->backend_handle_.task_notify_handle_,
-                                       xHigherPriorityTaskWoken);
+            if (instance->backend_handle_.task_notify_handle_ == NULL) {
+                return;
             }
+            vTaskNotifyGiveFromISR(instance->backend_handle_.task_notify_handle_, xHigherPriorityTaskWoken);
             break;
-
         case MODULE_SERIAL_STREAM_NOTIFY_SEMAPHORE:
-            if (instance->backend_handle_.semphr_notify_handle_ != NULL) {
-                xSemaphoreGiveFromISR(instance->backend_handle_.semphr_notify_handle_,
-                                      xHigherPriorityTaskWoken);
+            if (instance->backend_handle_.semphr_notify_handle_ == NULL) {
+                return;
             }
+            xSemaphoreGiveFromISR(instance->backend_handle_.semphr_notify_handle_, xHigherPriorityTaskWoken);
             break;
-
         default:
             break;
     }
@@ -114,19 +111,18 @@ static void sendSegmentToBufferFromISR(moduleSerialStream_t *instance,
                                        uint16_t rx_data_end_pos,
                                        BaseType_t *xHigherPriorityTaskWoken)
 {
-    size_t bytes_to_send;
-    size_t bytes_sent;
-
     if (instance == NULL ||
+        xHigherPriorityTaskWoken == NULL ||
         instance->backend_handle_.stream_buffer_handle_ == NULL ||
         rx_buffer_ptr == NULL ||
-        xHigherPriorityTaskWoken == NULL ||
         rx_data_start_index >= rx_buffer_size ||
         rx_data_end_pos > rx_buffer_size ||
         rx_data_start_index >= rx_data_end_pos) {
         return;
     }
 
+    size_t bytes_to_send;
+    size_t bytes_sent;
     bytes_to_send = (size_t)(rx_data_end_pos - rx_data_start_index);
     bytes_sent = xStreamBufferSendFromISR(instance->backend_handle_.stream_buffer_handle_,
                                           &rx_buffer_ptr[rx_data_start_index],
@@ -134,7 +130,7 @@ static void sendSegmentToBufferFromISR(moduleSerialStream_t *instance,
                                           xHigherPriorityTaskWoken);
     instance->rx_total_bytes_ += (uint32_t)bytes_to_send;
 
-    // 发送数据丢失，即中断中向 StreamBuffer 写入 bytes_to_send 字节，但实际只写入 bytes_sent 字节，说明容量不够
+    // 送入的字节数大于实际写入字节数，说明 StreamBuffer 容量不够，发生了丢字节
     if (bytes_sent < bytes_to_send) {
         instance->rx_drop_count_++;
         instance->rx_drop_bytes_ += (uint32_t)(bytes_to_send - bytes_sent);
@@ -154,7 +150,7 @@ static uint32_t readDataZeroCopy(moduleSerialStream_t *instance, uint8_t *data_o
     uint32_t write_bytes = instance->rx_write_bytes_;
     uint32_t read_bytes = instance->rx_read_bytes_;
     uint16_t dma_size = instance->rx_dma_buffer_size_;
-
+    
     uint32_t available_bytes = write_bytes - read_bytes;
 
     if (available_bytes == 0U) {
@@ -176,12 +172,10 @@ static uint32_t readDataZeroCopy(moduleSerialStream_t *instance, uint8_t *data_o
 
     uint32_t bytes_to_read = (available_bytes < max_length) ? available_bytes : max_length;
 
-    for (uint32_t i = 0; i < bytes_to_read; i++) {
-        // rx_read_bytes_ 是单调递增的逻辑读指针，取模后就是 DMA 环形缓冲区数组下标
+    for (uint32_t i = 0U; i < bytes_to_read; i++) {
         uint16_t read_index = (uint16_t)(instance->rx_read_bytes_ % dma_size);
 
         data_out[i] = instance->rx_dma_buffer_ptr_[read_index];
-
         instance->rx_read_bytes_++;
     }
 
@@ -190,7 +184,7 @@ static uint32_t readDataZeroCopy(moduleSerialStream_t *instance, uint8_t *data_o
     return bytes_to_read;
 }
 
-// UART RX 回调，在中断上下文中被 bsp_uart 调用
+// UART RX 回调，在中断上下文中由 bsp_uart 调用
 static void uartRxCallbackFromISR(void *owner_ptr, const bspUARTRxEventContext_t *rx_context)
 {
     if (owner_ptr == NULL ||
@@ -206,13 +200,13 @@ static void uartRxCallbackFromISR(void *owner_ptr, const bspUARTRxEventContext_t
 
     switch (instance->backend_) {
         case MODULE_SERIAL_STREAM_BACKEND_STREAM_BUFFER: {
-            if (instance->backend_handle_.stream_buffer_handle_ == NULL) {
-                return;
-            }
-
             uint16_t start = rx_context->rx_data_start_index_;
             uint16_t end = rx_context->rx_data_end_pos_;
             uint16_t size = rx_context->rx_buffer_size_;
+
+            if (instance->backend_handle_.stream_buffer_handle_ == NULL) {
+                return;
+            }
 
             if (start < end) {
                 sendSegmentToBufferFromISR(instance,
@@ -240,7 +234,7 @@ static void uartRxCallbackFromISR(void *owner_ptr, const bspUARTRxEventContext_t
             break;
         }
 
-        case MODULE_SERIAL_STREAM_BACKEND_ZERO_COPY: {
+        case MODULE_SERIAL_STREAM_BACKEND_ZERO_COPY:
             if (isZeroCopyNotifyHandleValid(instance) == false) {
                 return;
             }
@@ -253,10 +247,6 @@ static void uartRxCallbackFromISR(void *owner_ptr, const bspUARTRxEventContext_t
 
             notifyZeroCopyReceiverFromISR(instance, &xHigherPriorityTaskWoken);
             break;
-        }
-
-        default:
-            return;
     }
 
     // 如果唤醒了更高优先级任务，触发调度
@@ -284,7 +274,7 @@ bool moduleSerialStreamInit(moduleSerialStream_t *instance, const moduleSerialSt
                 return false;
             }
 
-            // StreamBuffer 模式不需要额外通知后端，避免误填 task/semaphore 造成语义不清
+            // StreamBuffer 模式不需要额外通知后端，避免误配 task/semaphore 语义不清
             if (config->notify_backend_ != MODULE_SERIAL_STREAM_NOTIFY_NONE) {
                 return false;
             }
@@ -323,19 +313,21 @@ uint32_t moduleSerialStreamRead(moduleSerialStream_t *instance,
 
     switch (instance->backend_) {
         case MODULE_SERIAL_STREAM_BACKEND_STREAM_BUFFER:
+            uint32_t read_bytes;
+
             if (instance->backend_handle_.stream_buffer_handle_ == NULL) {
                 return 0U;
             }
 
-            uint32_t read_bytes = (uint32_t)xStreamBufferReceive(instance->backend_handle_.stream_buffer_handle_,
-                                                                 data_out,
-                                                                 max_length,
-                                                                 timeout_tick);
+            read_bytes = (uint32_t)xStreamBufferReceive(instance->backend_handle_.stream_buffer_handle_,
+                                                        data_out,
+                                                        max_length,
+                                                        timeout_tick);
             instance->rx_accept_bytes_ += read_bytes;
             return read_bytes;
 
         case MODULE_SERIAL_STREAM_BACKEND_ZERO_COPY:
-            // 零拷贝模式下，这里不做阻塞等待；task notify / semaphore take 交给上层任务处理
+            // Zero copy 模式下，这里不阻塞等待；task notify / semaphore take 交给上层任务处理
             (void)timeout_tick;
             return readDataZeroCopy(instance, data_out, max_length);
 
