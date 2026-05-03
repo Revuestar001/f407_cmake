@@ -22,6 +22,9 @@
 #include "app_chassis.h"
 #include "app_def.h"
 #include "user_def.h"
+#include "app_topics.h"
+#include "topic_bus.h"
+#include "msg_rc_command.h"
 
 typedef struct app_chassis
 {
@@ -39,6 +42,8 @@ typedef struct app_chassis
     uint32_t x6_debug_reply_count_;
     uint32_t x6_debug_active_reply_config_count_;
     bool x6_debug_active_reply_config_sent_;
+
+    moduleTopicSubscription_t rc_sub_handle_;
 
     uint8_t error_count_;
 } appChassis_t;
@@ -258,6 +263,10 @@ static bool appChassisInit(void)
     //     return false;
     // }
 
+    if (moduleTopicBusSubscribe(appTopicsGet(APP_TOPICS_RC_COMMAND), &app_chassis_.rc_sub_handle_) == false) {
+        return false;
+    }
+
     motorRMDV2X6Config_t x6_config = {
         .motor_id_ = MOTOR_RMD_V2_X6_MOTOR_ID_2,
         .can_instance_ = bspBoardGetCANInstance(BSP_CAN_1),
@@ -385,11 +394,15 @@ void appChassisTaskEntry(void *argument)
     motorStatus_e motor_status;
 
     for (;;) {
-        appRemoteControlCommand_t command_new;
-        if (appRemoteControlReceiveCommand(&command_new, 0U) == true) {
-            remote_control_command = command_new;
+        msgRCCommand_t rc_msg;
+        if (moduleTopicBusCopy(&app_chassis_.rc_sub_handle_, &rc_msg) == true) {
+            remote_control_command.state_ = rc_msg.state_;
+            remote_control_command.armed_ = rc_msg.armed_;
+            remote_control_command.drive_mode_ = rc_msg.drive_mode_;
+            remote_control_command.linear_speed_ = rc_msg.linear_speed_;
+            remote_control_command.angular_speed_ = rc_msg.angular_speed_;
         }
-
+        
         appChassisBuildVelocityCommandFromRemoteControl(&remote_control_command, &left_ref, &right_ref);
 
         // motor_status = moduleMotorActuatorUpdateCommand(&app_chassis_.actuator_[0], &left_ref);

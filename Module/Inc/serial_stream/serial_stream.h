@@ -69,6 +69,7 @@ typedef struct module_serial_stream
     volatile uint32_t rx_drop_bytes_;   // 丢弃字节数
 } moduleSerialStream_t;
 
+// 初始化，同时会注册UART RX接收回调
 bool moduleSerialStreamInit(moduleSerialStream_t *instance, const moduleSerialStreamConfig_t *config);
 
 // 从 serial stream 中读出数据，返回成功读出字节数；请注意 DMA ring buffer 下 timeout_tick 无效，阻塞等待交给上层处理

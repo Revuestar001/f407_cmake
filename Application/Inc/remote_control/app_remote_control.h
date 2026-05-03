@@ -35,8 +35,6 @@ typedef struct app_remote_control_stats
 appRemoteControlState_e appRemoteControlGetState(void);
 // 一般直接获取指令值即可
 appRemoteControlCommand_t appRemoteControlGetCommand(void);
-// 通过任务间队列接收最新指令，timeout_tick 为 FreeRTOS tick
-bool appRemoteControlReceiveCommand(appRemoteControlCommand_t *command_out, uint32_t timeout_tick);
 // 获取当前统计快照
 bool appRemoteControlGetStats(appRemoteControlStats_t *stats_out);
 // 清零统计，便于按测试窗口重新观察
