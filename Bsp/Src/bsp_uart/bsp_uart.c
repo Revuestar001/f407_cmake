@@ -189,12 +189,15 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
                     // rx_cur_pos < rx_last_pos
                     // DMA从缓冲区绕回，数据分为两段
                     // owner自行拆为两段数据
-                    instance->rx_event_callback_(instance->owner_,
-                                                instance->rx_buffer_ptr_,
-                                                rx_buffer_size,
-                                                rx_last_pos,
-                                                rx_cur_pos,
-                                                rx_event);  
+                    bspUARTRxEventContext_t rx_context = {
+                        .rx_buffer_ptr_ = instance->rx_buffer_ptr_,
+                        .rx_buffer_size_ = rx_buffer_size,
+                        .rx_data_start_index_ = rx_last_pos,
+                        .rx_data_end_pos_ = rx_cur_pos,
+                        .rx_data_len_ = (rx_cur_pos < rx_last_pos) ? ((rx_buffer_size - rx_last_pos) + rx_cur_pos) : (rx_cur_pos - rx_last_pos),
+                        .rx_event_ = rx_event,
+                    };
+                    instance->rx_event_callback_(instance->owner_, &rx_context);  
                 }    
             } else {
                 // rx_cur_pos = rx_last_pos

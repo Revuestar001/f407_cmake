@@ -197,41 +197,38 @@ static void appRemoteControlSendSegmentToBufferFromISR(appRemoteControlInstance_
 }
 
 // 在中断中
-static void appRemoteControlSendDataToBuffer(void *owner_ptr,
-                                             uint8_t *rx_buffer_ptr,
-                                             uint16_t rx_buffer_size,
-                                             uint16_t rx_data_start_index,
-                                             uint16_t rx_data_end_pos,
-                                             bspUARTRxEventType_e rx_event)
+static void appRemoteControlSendDataToBuffer(void *owner_ptr, const bspUARTRxEventContext_t *rx_context)
 {
-    appRemoteControlInstance_t *instance = (appRemoteControlInstance_t *)owner_ptr;
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    (void)rx_event;
-
-    if (instance == NULL || rx_buffer_ptr == NULL || instance->stream_buffer_handle_ == NULL) {
+    if (owner_ptr == NULL || rx_context == NULL || rx_context->rx_buffer_ptr_ == NULL) {
         return;
     }
 
-    if (rx_data_start_index < rx_data_end_pos) {
+    appRemoteControlInstance_t *instance = (appRemoteControlInstance_t *)owner_ptr;
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    if (instance->stream_buffer_handle_ == NULL) {
+        return;
+    }
+
+    if (rx_context->rx_data_start_index_ < rx_context->rx_data_end_pos_) {
         appRemoteControlSendSegmentToBufferFromISR(instance,
-                                                   rx_buffer_ptr,
-                                                   rx_buffer_size,
-                                                   rx_data_start_index,
-                                                   rx_data_end_pos,
+                                                   rx_context->rx_buffer_ptr_,
+                                                   rx_context->rx_buffer_size_,
+                                                   rx_context->rx_data_start_index_,
+                                                   rx_context->rx_data_end_pos_,
                                                    &xHigherPriorityTaskWoken);
-    } else if (rx_data_start_index > rx_data_end_pos) {
+    } else if (rx_context->rx_data_start_index_ > rx_context->rx_data_end_pos_) {
         appRemoteControlSendSegmentToBufferFromISR(instance,
-                                                   rx_buffer_ptr,
-                                                   rx_buffer_size,
-                                                   rx_data_start_index,
-                                                   rx_buffer_size,
+                                                   rx_context->rx_buffer_ptr_,
+                                                   rx_context->rx_buffer_size_,
+                                                   rx_context->rx_data_start_index_,
+                                                   rx_context->rx_buffer_size_,
                                                    &xHigherPriorityTaskWoken);
         appRemoteControlSendSegmentToBufferFromISR(instance,
-                                                   rx_buffer_ptr,
-                                                   rx_buffer_size,
+                                                   rx_context->rx_buffer_ptr_,
+                                                   rx_context->rx_buffer_size_,
                                                    0U,
-                                                   rx_data_end_pos,
+                                                   rx_context->rx_data_end_pos_,
                                                    &xHigherPriorityTaskWoken);
     } else {
         return;

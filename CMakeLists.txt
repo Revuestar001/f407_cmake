@@ -74,6 +74,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/algorithm/pid/pid.c
     Module/Src/algorithm/filter/1st_order_lp_filter.c
     Module/Src/topic_bus/topic_bus.c
+    Module/Src/serial_stream/serial_stream.c
 
     Application/Src/remote_control/app_remote_control.c
     Application/Src/imu/app_imu.c
@@ -108,6 +109,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/algorithm/pid/
     Module/Inc/algorithm/filter/
     Module/Inc/topic_bus/
+    Module/Inc/serial_stream/
 
     Application/Inc/remote_control/
     Application/Inc/imu/

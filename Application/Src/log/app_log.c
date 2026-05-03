@@ -1,4 +1,5 @@
 #include "FreeRTOS.h"
+#include "bsp_uart.h"
 #include "cmsis_os2.h"
 #include "portmacro.h"
 #include "projdefs.h"
@@ -111,50 +112,45 @@ static int appLogFormatINSLine(char *buffer, size_t buffer_size, const msgINS_t 
                     (unsigned long)(yaw_abs_centi_deg % 100U));
 }
 
-static void appLogHandlePrintRxEvent(void *owner_ptr,
-                                     uint8_t *rx_buffer_ptr,
-                                     uint16_t rx_buffer_size,
-                                     uint16_t rx_data_start_index,
-                                     uint16_t rx_data_end_pos,
-                                     bspUARTRxEventType_e rx_event)
+static void appLogHandlePrintRxEvent(void *owner_ptr, const bspUARTRxEventContext_t *rx_context)
 {
     appLog_t *instance = (appLog_t *)owner_ptr;
     uint16_t total_bytes = 0U;
     uint8_t snapshot_count = 0U;
 
-    if (instance == NULL || rx_buffer_ptr == NULL || rx_buffer_size == 0U) {
+    if (instance == NULL || rx_context->rx_buffer_ptr_ == NULL || rx_context->rx_buffer_size_ == 0U) {
         return;
     }
 
     instance->print_rx_event_count_++;
-    instance->print_rx_last_event_type_ = (uint32_t)rx_event;
+    instance->print_rx_last_event_type_ = (uint32_t)rx_context->rx_event_;
 
-    if (rx_data_start_index < rx_data_end_pos) {
-        total_bytes = (uint16_t)(rx_data_end_pos - rx_data_start_index);
+    if (rx_context->rx_data_start_index_ < rx_context->rx_data_end_pos_) {
+        total_bytes = (uint16_t)(rx_context->rx_data_end_pos_ - rx_context->rx_data_start_index_);
         snapshot_count = (uint8_t)((total_bytes < APP_LOG_RX_SNAPSHOT_SIZE) ? total_bytes : APP_LOG_RX_SNAPSHOT_SIZE);
         memcpy(instance->print_rx_last_bytes_,
-               &rx_buffer_ptr[rx_data_start_index],
+               &rx_context->rx_buffer_ptr_[rx_context->rx_data_start_index_],
                snapshot_count);
-    } else if (rx_data_start_index > rx_data_end_pos) {
-        uint16_t first_part_bytes = (uint16_t)(rx_buffer_size - rx_data_start_index);
-        uint16_t second_part_bytes = rx_data_end_pos;
+    } else if (rx_context->rx_data_start_index_ > rx_context->rx_data_end_pos_) {
+        uint16_t first_part_bytes = (uint16_t)(rx_context->rx_buffer_size_ - rx_context->rx_data_start_index_);
+        uint16_t second_part_bytes = rx_context->rx_data_end_pos_;
 
         total_bytes = (uint16_t)(first_part_bytes + second_part_bytes);
         snapshot_count = (uint8_t)((total_bytes < APP_LOG_RX_SNAPSHOT_SIZE) ? total_bytes : APP_LOG_RX_SNAPSHOT_SIZE);
 
         if (snapshot_count <= first_part_bytes) {
             memcpy(instance->print_rx_last_bytes_,
-                   &rx_buffer_ptr[rx_data_start_index],
+                   &rx_context->rx_buffer_ptr_[rx_context->rx_data_start_index_],
                    snapshot_count);
         } else {
             uint8_t first_copy_bytes = (uint8_t)first_part_bytes;
             uint8_t second_copy_bytes = (uint8_t)(snapshot_count - first_copy_bytes);
 
             memcpy(instance->print_rx_last_bytes_,
-                   &rx_buffer_ptr[rx_data_start_index],
+                   &rx_context->rx_buffer_ptr_[rx_context->rx_data_start_index_],
                    first_copy_bytes);
             memcpy(&instance->print_rx_last_bytes_[first_copy_bytes],
-                   &rx_buffer_ptr[0],
+                   &rx_context->rx_buffer_ptr_[0],
                    second_copy_bytes);
         }
     } else {
