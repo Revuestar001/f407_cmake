@@ -14,7 +14,7 @@ static bool isBackendValid(moduleSerialStreamBackend_e backend)
 {
     switch (backend) {
         case MODULE_SERIAL_STREAM_BACKEND_STREAM_BUFFER:
-        case MODULE_SERIAL_STREAM_BACKEND_ZERO_COPY:
+        case MODULE_SERIAL_STREAM_BACKEND_DMA_RING_BUFFER:
             return true;
         default:
             break;
@@ -37,8 +37,8 @@ static bool isNotifyBackendValid(moduleSerialStreamNotifyBackend_e notify_backen
     return false;
 }
 
-// backend_handle_ 是 union，必须结合 notify_backend_ 才能判断 zero copy 的接收通知句柄是否有效
-static bool isZeroCopyNotifyHandleValid(const moduleSerialStream_t *instance)
+// backend_handle_ 是 union，必须结合 notify_backend_ 才能判断 DMA ring buffer 的接收通知句柄是否有效
+static bool isDMARingBufferNotifyHandleValid(const moduleSerialStream_t *instance)
 {
     if (instance == NULL) {
         return false;
@@ -58,8 +58,8 @@ static bool isZeroCopyNotifyHandleValid(const moduleSerialStream_t *instance)
     return false;
 }
 
-// backend_handle_ 是 union，必须结合 notify_backend_ 才能判断 zero copy 的配置是否有效
-static bool isZeroCopyNotifyConfigValid(const moduleSerialStreamConfig_t *config)
+// backend_handle_ 是 union，必须结合 notify_backend_ 才能判断 DMA ring buffer 的配置是否有效
+static bool isDMARingBufferNotifyConfigValid(const moduleSerialStreamConfig_t *config)
 {
     if (config == NULL) {
         return false;
@@ -79,7 +79,8 @@ static bool isZeroCopyNotifyConfigValid(const moduleSerialStreamConfig_t *config
     return false;
 }
 
-static void notifyZeroCopyReceiverFromISR(moduleSerialStream_t *instance, BaseType_t *xHigherPriorityTaskWoken)
+static void notifyDMARingBufferReceiverFromISR(moduleSerialStream_t *instance,
+                                               BaseType_t *xHigherPriorityTaskWoken)
 {
     if (instance == NULL || xHigherPriorityTaskWoken == NULL) {
         return;
@@ -137,7 +138,9 @@ static void sendSegmentToBufferFromISR(moduleSerialStream_t *instance,
     }
 }
 
-static uint32_t readDataZeroCopy(moduleSerialStream_t *instance, uint8_t *data_out, uint32_t max_length)
+static uint32_t readDataDMARingBuffer(moduleSerialStream_t *instance,
+                                      uint8_t *data_out,
+                                      uint32_t max_length)
 {
     if (instance == NULL || data_out == NULL || max_length == 0U) {
         return 0U;
@@ -234,8 +237,8 @@ static void uartRxCallbackFromISR(void *owner_ptr, const bspUARTRxEventContext_t
             break;
         }
 
-        case MODULE_SERIAL_STREAM_BACKEND_ZERO_COPY:
-            if (isZeroCopyNotifyHandleValid(instance) == false) {
+        case MODULE_SERIAL_STREAM_BACKEND_DMA_RING_BUFFER:
+            if (isDMARingBufferNotifyHandleValid(instance) == false) {
                 return;
             }
 
@@ -245,7 +248,7 @@ static void uartRxCallbackFromISR(void *owner_ptr, const bspUARTRxEventContext_t
             instance->rx_write_bytes_ += rx_context->rx_data_len_;
             instance->rx_total_bytes_ += rx_context->rx_data_len_;
 
-            notifyZeroCopyReceiverFromISR(instance, &xHigherPriorityTaskWoken);
+            notifyDMARingBufferReceiverFromISR(instance, &xHigherPriorityTaskWoken);
             break;
     }
 
@@ -280,9 +283,9 @@ bool moduleSerialStreamInit(moduleSerialStream_t *instance, const moduleSerialSt
             }
             break;
 
-        case MODULE_SERIAL_STREAM_BACKEND_ZERO_COPY:
-            // Zero copy 模式必须显式指定通知方式，并且对应 handle 必须有效
-            if (isZeroCopyNotifyConfigValid(config) == false) {
+        case MODULE_SERIAL_STREAM_BACKEND_DMA_RING_BUFFER:
+            // DMA ring buffer 模式必须显式指定通知方式，并且对应 handle 必须有效
+            if (isDMARingBufferNotifyConfigValid(config) == false) {
                 return false;
             }
             break;
@@ -326,10 +329,10 @@ uint32_t moduleSerialStreamRead(moduleSerialStream_t *instance,
             instance->rx_accept_bytes_ += read_bytes;
             return read_bytes;
 
-        case MODULE_SERIAL_STREAM_BACKEND_ZERO_COPY:
-            // Zero copy 模式下，这里不阻塞等待；task notify / semaphore take 交给上层任务处理
+        case MODULE_SERIAL_STREAM_BACKEND_DMA_RING_BUFFER:
+            // DMA ring buffer 模式下，这里不阻塞等待；task notify / semaphore take 交给上层任务处理
             (void)timeout_tick;
-            return readDataZeroCopy(instance, data_out, max_length);
+            return readDataDMARingBuffer(instance, data_out, max_length);
 
         default:
             break;

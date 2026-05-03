@@ -15,7 +15,7 @@
 typedef enum
 {
     MODULE_SERIAL_STREAM_BACKEND_STREAM_BUFFER  = 0,
-    MODULE_SERIAL_STREAM_BACKEND_ZERO_COPY,
+    MODULE_SERIAL_STREAM_BACKEND_DMA_RING_BUFFER, // 直接将DMA循环缓冲区作为ring buffer读取数据，减少一次拷贝，但不是全链路零拷贝
 } moduleSerialStreamBackend_e;
 
 typedef enum
@@ -30,7 +30,7 @@ typedef union
     // StreamBuffer 模式使用
     StreamBufferHandle_t stream_buffer_handle_;
 
-    // Zero copy 模式使用，由 notify_backend_ 决定解释成哪个 handle
+    // DMA ring buffer 模式使用，由 notify_backend_ 决定解释成哪个 handle
     TaskHandle_t task_notify_handle_;
     SemaphoreHandle_t semphr_notify_handle_;
 } moduleSerialStreamBackendHandle_u;
@@ -43,7 +43,7 @@ typedef struct module_serial_stream_config
 
     moduleSerialStreamBackendHandle_u backend_handle_;
 
-    // 仅 Zero copy 模式使用；StreamBuffer 模式应保持 MODULE_SERIAL_STREAM_NOTIFY_NONE
+    // 仅 DMA ring buffer 模式使用；StreamBuffer 模式应保持 MODULE_SERIAL_STREAM_NOTIFY_NONE
     moduleSerialStreamNotifyBackend_e notify_backend_;
 } moduleSerialStreamConfig_t;
 
@@ -59,6 +59,7 @@ typedef struct module_serial_stream
     uint8_t *rx_dma_buffer_ptr_;
     uint16_t rx_dma_buffer_size_;
 
+    // 请注意，这里用的是读写总字节数，而不是读写指针设计！
     volatile uint32_t rx_write_bytes_; // RX DMA 已写入字节总数
     uint32_t rx_read_bytes_;           // serial stream 已读取的字节总数，包含丢失后跳过的部分
 
@@ -70,8 +71,10 @@ typedef struct module_serial_stream
 
 bool moduleSerialStreamInit(moduleSerialStream_t *instance, const moduleSerialStreamConfig_t *config);
 
-// 从 serial stream 中读出数据，返回成功读出字节数；请注意 Zero copy 下 timeout_tick 无效，阻塞等待交给上层处理
+// 从 serial stream 中读出数据，返回成功读出字节数；请注意 DMA ring buffer 下 timeout_tick 无效，阻塞等待交给上层处理
 uint32_t moduleSerialStreamRead(moduleSerialStream_t *instance,
                                 uint8_t *data_out,
                                 uint32_t max_length,
                                 TickType_t timeout_tick);
+
+#define moduleSerialStreamReadDMARingBuffer(instance, data_out, max_length) moduleSerialStreamRead((instance), (data_out), (max_length), ((TickType_t)0U))
