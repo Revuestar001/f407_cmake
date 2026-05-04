@@ -18,6 +18,8 @@ typedef struct can_instance
 
     bspCANRxRoute_t rx_route_[BSP_CAN_SINGLE_MAX_DEVICE_NUM];
     uint8_t rx_route_count_;
+    uint8_t filter_configured_route_count_;
+    bool is_started_;
 
     bspCANErrorCallback_f error_callback_;
 } bspCANInstance_t;
@@ -126,6 +128,8 @@ bspCANInstance_t *bspCANInit(const bspCANConfig_t *config)
     instance->can_handle_ = config->can_handle_;
     instance->name_ = config->name_;
     instance->rx_route_count_ = 0;
+    instance->filter_configured_route_count_ = 0;
+    instance->is_started_ = false;
 
     can_memory_index_ ++;
 
@@ -159,6 +163,14 @@ bspCANStatus_e bspCANSetFilter(bspCANInstance_t *instance)
         return BSP_CAN_ERROR;
     }
 
+    if (instance->filter_configured_route_count_ == instance->rx_route_count_) {
+        return BSP_CAN_OK;
+    }
+
+    if (instance->is_started_ == true) {
+        return BSP_CAN_BUSY;
+    }
+
     HAL_StatusTypeDef status_hal;
 
     CAN_FilterTypeDef filter_config;
@@ -182,6 +194,8 @@ bspCANStatus_e bspCANSetFilter(bspCANInstance_t *instance)
         }
     }
 
+    instance->filter_configured_route_count_ = instance->rx_route_count_;
+
     return BSP_CAN_OK;
 }
 
@@ -189,6 +203,10 @@ bspCANStatus_e bspCANStart(bspCANInstance_t *instance)
 {
     if (instance == NULL || instance->can_handle_ == NULL) {
         return BSP_CAN_ERROR;
+    }
+
+    if (instance->is_started_ == true) {
+        return BSP_CAN_OK;
     }
 
     HAL_StatusTypeDef status_hal;
@@ -208,6 +226,8 @@ bspCANStatus_e bspCANStart(bspCANInstance_t *instance)
     if (status_hal != HAL_OK) {
         return bspCANGetStatusFromHAL(status_hal);
     }
+
+    instance->is_started_ = true;
 
     return BSP_CAN_OK;
 }
