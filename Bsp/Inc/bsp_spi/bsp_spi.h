@@ -21,7 +21,7 @@ typedef enum
 
 typedef struct spi_instance bspSPIInstance_t;
 
-typedef void (*bspSPITxRxCpltCallback_f)(void *owner, uint8_t *tx_buffer_ptr, uint8_t *rx_buffer_ptr, uint16_t data_size);
+typedef void (*bspSPITxRxCpltCallback_f)(void *owner, uint8_t *tx_buffer_ptr, uint8_t *rx_buffer_ptr, uint16_t data_size, bool *xfer_continue);
 typedef void (*bspSPIErrorCallback_f)(void *owner);
 
 void bspSPITxRxCpltCallbackRegister(bspSPIInstance_t *instance, void *owner_ptr, bspSPITxRxCpltCallback_f callback);

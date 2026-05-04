@@ -24,7 +24,8 @@ typedef struct spi_instance
     bspSPITxRxCpltCallback_f txrx_cplt_callback_;
     bspSPIErrorCallback_f error_callback_;
 
-    void *owner_;
+    void *tx_rx_owner_;
+    void *error_owner_;
 } bspSPIInstance_t;
 
 static uint8_t spi_memory_index_ = 0;
@@ -80,13 +81,13 @@ bspSPIInstance_t *bspSPIInit(const bspSPIConfig_t *config)
 
 void bspSPITxRxCpltCallbackRegister(bspSPIInstance_t *instance, void *owner_ptr, bspSPITxRxCpltCallback_f callback)
 {
-    instance->owner_ = owner_ptr;
+    instance->tx_rx_owner_ = owner_ptr;
     instance->txrx_cplt_callback_ = callback;
 }
 
 void bspSPIErrorCallbackRegister(bspSPIInstance_t *instance, void *owner_ptr, bspSPIErrorCallback_f callback)
 {
-    instance->owner_ = owner_ptr;
+    instance->error_owner_ = owner_ptr;
     instance->error_callback_ = callback;
 }
 
@@ -254,17 +255,23 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
         return;
     }
 
+    bool xfer_continue = false;
+
     if (instance->txrx_cplt_callback_ != NULL) {
-        instance->txrx_cplt_callback_(instance->owner_, 
+        instance->txrx_cplt_callback_(instance->tx_rx_owner_, 
                                     instance->tx_buffer_ptr_this_transfer_,
                                     instance->rx_buffer_ptr_this_transfer_,
-                                    instance->data_size_this_transfer_);
+                                    instance->data_size_this_transfer_, 
+                                    &xfer_continue);
     }
 
-    // 无论是否有回调，本次传输完成，清空保存的缓冲区信息
-    instance->tx_buffer_ptr_this_transfer_ = NULL;
-    instance->rx_buffer_ptr_this_transfer_ = NULL;
-    instance->data_size_this_transfer_ = 0;
+    if (xfer_continue == false) {
+        // 没有下一笔传输事务
+        // 无论是否有回调，本次传输完成，清空保存的缓冲区信息
+        instance->tx_buffer_ptr_this_transfer_ = NULL;
+        instance->rx_buffer_ptr_this_transfer_ = NULL;
+        instance->data_size_this_transfer_ = 0;
+    }
 }
 
 void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
@@ -275,7 +282,7 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
     }
 
     if (instance->error_callback_ != NULL) {
-        instance->error_callback_(instance->owner_);
+        instance->error_callback_(instance->error_owner_);
     }
 
     // 无论是否有回调，清空保存的缓冲区信息

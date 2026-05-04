@@ -54,6 +54,8 @@ typedef enum
 typedef struct device_bmi088 deviceBMI088Instance_t;
 
 typedef void (*deviceBMI088DelayUsCallback_f)(uint32_t time_us);
+typedef void (*deviceBMI088DMAXferCpltNotifyCallback_f)(void);
+typedef void (*deviceBMI088DMAXferErrorNotifyCallback_f)(void);
 
 typedef struct device_bmi088_config
 {
@@ -64,6 +66,10 @@ typedef struct device_bmi088_config
     deviceBMI088Mode_e mode_;
 
     deviceBMI088DelayUsCallback_f delay_us_callback_;
+
+    // 请注意这两个回调是在ISR中使用的，请务必保证只做最简单的处理！！
+    deviceBMI088DMAXferCpltNotifyCallback_f dma_xfer_cplt_notify_callback_from_isr_;
+    deviceBMI088DMAXferErrorNotifyCallback_f dma_xfer_error_notify_callback_from_isr_;
 
     const char *name_;
 } deviceBMI088Config_t;
@@ -81,8 +87,15 @@ typedef struct device_bmi088_data
 deviceBMI088Instance_t *deviceBMI088InstanceInit(const deviceBMI088Config_t *config);
 // 初始化对应的BMI088设备
 deviceBMI088Status_e deviceBMI088Init(deviceBMI088Instance_t *instance);
+
 // 读取并更新一次数据
+// 同步读取，只允许在DEVICE_BMI088_BLOCKING 和DEVICE_BMI088_EXTI模式下使用！
 deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance);
+// 使用DMA传输更新数据,开启一次DMA传输
+deviceBMI088Status_e deviceBMI088UpdateDataDMAStart(deviceBMI088Instance_t *instance);
+// 当DMA传输一次完整数据完成时，调用该函数以更新IMU数据
+deviceBMI088Status_e deviceBMI088UpdateDataDMAProcess(deviceBMI088Instance_t *instance, bool *new_data_ready);
+
 // 获取当前传感器数据，对于c板来说，bmi088直接输出的accel和gyro本来就定义在FLU下，注意F是robomaster字体为正时指向前部，即uart2标识-->uart1标识
 deviceBMI088Status_e deviceBMI088GetData(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out);
 // 获取转到对应机体坐标系下的当前传感器数据，默认bmi088与FLU对齐

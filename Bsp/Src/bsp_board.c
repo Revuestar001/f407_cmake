@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "bsp_spi.h"
 #include "main.h"
 
 #include "bsp_board.h"
@@ -153,7 +154,7 @@ static void bspBoardSPIInit()
 {   
     bspSPIConfig_t spi_config = {0};
 
-    spi_config = bspBoardSetSPIConfig(&SPI_IMU, BSP_SPI_WORK_MODE_BLOCKING, "SPI_IMU");
+    spi_config = bspBoardSetSPIConfig(&SPI_IMU, BSP_SPI_WORK_MODE_DMA, "SPI_IMU");
     bspBoardSPIInstancePtrArray[BSP_SPI_IMU] = bspSPIInit(&spi_config);
 }
 

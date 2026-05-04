@@ -39,6 +39,15 @@ typedef enum
     DEVICE_BMI088_TARGET_GYRO,
 } deviceBMI088Target_e;
 
+typedef enum
+{
+    DEVICE_BMI088_DMA_XFER_IDLE = 0, // 空闲，无DMA传输任务
+    DEVICE_BMI088_DMA_XFER_ACCESS_ACCEL,
+    DEVICE_BMI088_DMA_XFER_ACCESS_GYRO,
+    DEVICE_BMI088_DMA_XFER_RAW_DATA_READY,
+    DEVICE_BMI088_DMA_XFER_ERROR,
+} deviceBMI088DMAXferState_e;
+
 // 隐藏结构体
 typedef struct device_bmi088
 {
@@ -57,11 +66,60 @@ typedef struct device_bmi088
 
     deviceBMI088Target_e selected_target_; // 被选中的设备,用这个判断或许不可靠
 
+    volatile deviceBMI088DMAXferState_e dma_xfer_state_;
+    uint8_t dma_xfer_tx_buffer_[DEVICE_BMI088_MAX_BURST_LENGTH + 2U];
+    uint8_t dma_xfer_rx_buffer_[DEVICE_BMI088_MAX_BURST_LENGTH + 2U];
+    uint8_t accel_raw_uint8_buffer[ACC_XYZ_LEN];
+    uint8_t gyro_raw_uint8_buffer[GYRO_XYZ_LEN];
+    deviceBMI088DMAXferCpltNotifyCallback_f dma_xfer_cplt_notify_callback_from_isr_;
+    deviceBMI088DMAXferErrorNotifyCallback_f dma_xfer_error_notify_callback_from_isr_;
+
     deviceBMI088Data_t data_;
 } deviceBMI088Instance_t;
 
 static uint8_t bmi088_memory_index_ = 0;
 static deviceBMI088Instance_t bmi088_instance_memory_[DEVICE_BMI088_MAX_INSTANCE_NUM];
+
+static bool isModeValid(deviceBMI088Mode_e mode)
+{   
+    switch (mode) {
+        case DEVICE_BMI088_BLOCKING:
+        case DEVICE_BMI088_EXTI:
+        case DEVICE_BMI088_EXTI_DMA:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool changeSPIWorkModeByBMI088Config(deviceBMI088Instance_t *instance)
+{
+    if (instance == NULL) {
+        return false;
+    }
+
+    if (isModeValid(instance->mode_) == false) {
+        return false;
+    }
+
+    switch (instance->mode_) {
+        case DEVICE_BMI088_BLOCKING:
+        case DEVICE_BMI088_EXTI:
+            if (bspSPIChangeWorkMode(instance->spi_instance_, BSP_SPI_WORK_MODE_BLOCKING) != BSP_SPI_OK) {
+                return false;
+            }
+            break;
+        case DEVICE_BMI088_EXTI_DMA:
+            if (bspSPIChangeWorkMode(instance->spi_instance_, BSP_SPI_WORK_MODE_DMA) != BSP_SPI_OK) {
+                return false;
+            }
+            break;
+        default:
+            return false;
+    }
+
+    return true;
+}
 
 // 请注意，最好不要在非初始化阶段调用延时函数
 static void deviceBMI088DelayUs(deviceBMI088Instance_t *instance, uint32_t time_us)
@@ -73,7 +131,7 @@ static void deviceBMI088DelayUs(deviceBMI088Instance_t *instance, uint32_t time_
     instance->delay_us_callback_(time_us);
 }
 
-static int16_t deviceBMI088ParseRawData(uint8_t data_lsb, uint8_t data_msb)
+static int16_t parseRawDataOneAxis(uint8_t data_lsb, uint8_t data_msb)
 {
     return (int16_t)(((uint16_t)data_msb << 8U) | data_lsb);
 }
@@ -319,6 +377,141 @@ static void deviceBMI088MapDataByInstallTransform(deviceBMI088Instance_t  *insta
     data_mapped[2] = (float)instance->install_transform_.axis_sign[2] * data_raw[instance->install_transform_.axis_map[2]];
 }
 
+static bool deviceBMI088ParseRawData(deviceBMI088Instance_t  *instance)
+{
+    if (instance == NULL || instance->is_initialized_ == false) {
+        return false;
+    }
+
+    int16_t accel_raw[3] = {0};
+    int16_t gyro_raw[3] = {0};
+
+    accel_raw[0] = parseRawDataOneAxis(instance->accel_raw_uint8_buffer[0], instance->accel_raw_uint8_buffer[1]);
+    accel_raw[1] = parseRawDataOneAxis(instance->accel_raw_uint8_buffer[2], instance->accel_raw_uint8_buffer[3]);
+    accel_raw[2] = parseRawDataOneAxis(instance->accel_raw_uint8_buffer[4], instance->accel_raw_uint8_buffer[5]);
+
+    gyro_raw[0] = parseRawDataOneAxis(instance->gyro_raw_uint8_buffer[0], instance->gyro_raw_uint8_buffer[1]);
+    gyro_raw[1] = parseRawDataOneAxis(instance->gyro_raw_uint8_buffer[2], instance->gyro_raw_uint8_buffer[3]);
+    gyro_raw[2] = parseRawDataOneAxis(instance->gyro_raw_uint8_buffer[4], instance->gyro_raw_uint8_buffer[5]);
+
+    instance->data_.accel_raw_[0] = accel_raw[0];
+    instance->data_.accel_raw_[1] = accel_raw[1];
+    instance->data_.accel_raw_[2] = accel_raw[2];
+
+    instance->data_.gyro_raw_[0] = gyro_raw[0];
+    instance->data_.gyro_raw_[1] = gyro_raw[1];
+    instance->data_.gyro_raw_[2] = gyro_raw[2];
+
+    float data[3];
+
+    // 当前换算系数对应 init() 里固定写入的量程配置，accel_单位为m/s^2，gyro_单位为rad/s
+    data[0] = ((float)accel_raw[0] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
+    data[1] = ((float)accel_raw[1] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
+    data[2] = ((float)accel_raw[2] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
+    deviceBMI088MapDataByInstallTransform(instance, data, instance->data_.accel_ms2_);
+
+    data[0] = ((float)gyro_raw[0] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
+    data[1] = ((float)gyro_raw[1] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
+    data[2] = ((float)gyro_raw[2] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
+    deviceBMI088MapDataByInstallTransform(instance, data, instance->data_.gyro_rads_);
+
+    return true;
+}
+
+static bool resetDMAXfer(deviceBMI088Instance_t *instance)
+{
+    if (instance == NULL) {
+        return false;
+    }
+
+    memset(instance->dma_xfer_tx_buffer_, 0, sizeof(instance->dma_xfer_tx_buffer_));
+    memset(instance->dma_xfer_rx_buffer_, 0, sizeof(instance->dma_xfer_rx_buffer_));
+    instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_IDLE;
+
+    return true;
+}
+
+// 在ISR中
+static void deviceBMI088DMAXferCallback(void *owner, uint8_t *tx_buffer_ptr, uint8_t *rx_buffer_ptr, uint16_t data_size, bool *xfer_continue)
+{
+    if (owner == NULL || tx_buffer_ptr == NULL || rx_buffer_ptr == NULL || data_size == 0U || xfer_continue == NULL) {
+        return;
+    }
+
+    deviceBMI088Instance_t *instance = (deviceBMI088Instance_t *)owner;
+    *xfer_continue = false;
+
+    if (instance->is_initialized_ == false || instance->mode_ != DEVICE_BMI088_EXTI_DMA) {
+        return;
+    }
+
+    switch (instance->dma_xfer_state_) {
+        case DEVICE_BMI088_DMA_XFER_ACCESS_ACCEL:
+            deviceBMI088DeselectAllTarget(instance);
+            // 拷贝数据
+            memcpy(instance->accel_raw_uint8_buffer, rx_buffer_ptr + 2, ACC_XYZ_LEN);
+
+            deviceBMI088SelectTarget(instance, DEVICE_BMI088_TARGET_GYRO);
+            memset(instance->dma_xfer_tx_buffer_, DUMMY_BYTE, sizeof(instance->dma_xfer_tx_buffer_));
+            memset(instance->dma_xfer_rx_buffer_, 0, sizeof(instance->dma_xfer_rx_buffer_));
+            instance->dma_xfer_tx_buffer_[0] = DEVICE_BMI088_REG_TO_READ_CMD(GYRO_RATE_X_LSB_ADDR);
+            // 开启DMA传输
+            // 先切换状态，防止立刻进入SPI TXRX CPLT回调，导致状态切换错误
+            instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_ACCESS_GYRO;
+            bspSPIStatus_e spi_status;
+            spi_status = bspSPITransmitReceive(instance->spi_instance_, 
+                                                instance->dma_xfer_tx_buffer_, 
+                                                instance->dma_xfer_rx_buffer_, 
+                                                GYRO_XYZ_LEN + 1U);
+            if (spi_status != BSP_SPI_OK) {
+                deviceBMI088DeselectAllTarget(instance);
+                resetDMAXfer(instance);
+                if (instance->dma_xfer_error_notify_callback_from_isr_ != NULL) {
+                    instance->dma_xfer_error_notify_callback_from_isr_();
+                }
+                return;
+            }
+
+            *xfer_continue = true;
+            break;
+
+        case DEVICE_BMI088_DMA_XFER_ACCESS_GYRO:
+            deviceBMI088DeselectAllTarget(instance);
+            // 拷贝数据
+            memcpy(instance->gyro_raw_uint8_buffer, rx_buffer_ptr + 1, GYRO_XYZ_LEN);
+            instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_RAW_DATA_READY;
+
+            if (instance->dma_xfer_cplt_notify_callback_from_isr_ != NULL) {
+                instance->dma_xfer_cplt_notify_callback_from_isr_();
+            }
+            break;
+        
+        case DEVICE_BMI088_DMA_XFER_ERROR:
+            resetDMAXfer(instance);
+
+        case DEVICE_BMI088_DMA_XFER_IDLE:
+        case DEVICE_BMI088_DMA_XFER_RAW_DATA_READY:
+            return;
+    }
+}
+
+static void deviceBMI088DMAXferErrorCallback(void *owner)
+{
+    if (owner == NULL) {
+        return;
+    }
+
+    deviceBMI088Instance_t *instance = (deviceBMI088Instance_t *)owner;
+
+    deviceBMI088DeselectAllTarget(instance);
+
+    instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_ERROR;
+
+    if (instance->dma_xfer_error_notify_callback_from_isr_ != NULL) {
+        instance->dma_xfer_error_notify_callback_from_isr_();
+    }
+}
+
 // 这里是初始化实例，也许改为register更好？
 deviceBMI088Instance_t *deviceBMI088InstanceInit(const deviceBMI088Config_t *config)
 {
@@ -331,6 +524,10 @@ deviceBMI088Instance_t *deviceBMI088InstanceInit(const deviceBMI088Config_t *con
     }
 
     if (bmi088_memory_index_ >= DEVICE_BMI088_MAX_INSTANCE_NUM) {
+        return NULL;
+    }
+
+    if (isModeValid(config->mode_) == false) {
         return NULL;
     }
 
@@ -355,6 +552,15 @@ deviceBMI088Instance_t *deviceBMI088InstanceInit(const deviceBMI088Config_t *con
 
     instance->selected_target_ = DEVICE_BMI088_TARGET_NONE;
 
+    instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_IDLE;
+    if (instance->mode_ == DEVICE_BMI088_EXTI_DMA) {
+        // 也可以为NULL，即不通知
+        instance->dma_xfer_cplt_notify_callback_from_isr_ = config->dma_xfer_cplt_notify_callback_from_isr_;
+        instance->dma_xfer_error_notify_callback_from_isr_ = config->dma_xfer_error_notify_callback_from_isr_;
+        bspSPITxRxCpltCallbackRegister(instance->spi_instance_, instance, deviceBMI088DMAXferCallback);
+        bspSPIErrorCallbackRegister(instance->spi_instance_, instance, deviceBMI088DMAXferErrorCallback);
+    }
+
     bmi088_memory_index_ ++;
 
     return instance;
@@ -370,6 +576,13 @@ deviceBMI088Status_e deviceBMI088Init(deviceBMI088Instance_t *instance)
     bool state = true;
 
     instance->is_initialized_ = false;
+
+    // BMI088初始化使用阻塞读取！
+    bspSPIStatus_e spi_status;
+    spi_status = bspSPIChangeWorkMode(instance->spi_instance_, BSP_SPI_WORK_MODE_BLOCKING);
+    if (spi_status != BSP_SPI_OK) {
+        return DEVICE_BMI088_ERROR;
+    }
 
     // 释放所有CS
     deviceBMI088DeselectAllTarget(instance);
@@ -401,65 +614,126 @@ deviceBMI088Status_e deviceBMI088Init(deviceBMI088Instance_t *instance)
         return DEVICE_BMI088_ERROR;
     }
 
+    // 切换到对应的SPI模式
+    deviceBMI088DelayUs(instance, DEVICE_BMI088_BUS_IDLE_DELAY_US);
+    if (changeSPIWorkModeByBMI088Config(instance) == false) {
+        return DEVICE_BMI088_ERROR;
+    }
+
     instance->is_initialized_ = true;
 
     return DEVICE_BMI088_OK;
 }
 
+// 同步读取，只允许在DEVICE_BMI088_BLOCKING 和DEVICE_BMI088_EXTI模式下使用！
 deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance)
 {
     if (instance == NULL || instance->is_initialized_ == false) {
         return DEVICE_BMI088_ERROR;
     }
 
+    if (instance->mode_ == DEVICE_BMI088_EXTI_DMA) {
+        return DEVICE_BMI088_ERROR;
+    }
+
     bool state = true;
-    uint8_t accel_buffer[ACC_XYZ_LEN] = {0};
-    uint8_t gyro_buffer[GYRO_XYZ_LEN] = {0};
-    int16_t accel_raw[3] = {0};
-    int16_t gyro_raw[3] = {0};
 
     state &= deviceBMI088ReadRegisters(instance,
                                        DEVICE_BMI088_TARGET_ACCEL,
                                        ACC_X_LSB_ADDR,
-                                       accel_buffer,
+                                       instance->accel_raw_uint8_buffer,
                                        ACC_XYZ_LEN);
     state &= deviceBMI088ReadRegisters(instance,
                                        DEVICE_BMI088_TARGET_GYRO,
                                        GYRO_RATE_X_LSB_ADDR,
-                                       gyro_buffer,
+                                       instance->gyro_raw_uint8_buffer,
                                        GYRO_XYZ_LEN);
     if (state == false) {
         return DEVICE_BMI088_ERROR;
     }
 
-    accel_raw[0] = deviceBMI088ParseRawData(accel_buffer[0], accel_buffer[1]);
-    accel_raw[1] = deviceBMI088ParseRawData(accel_buffer[2], accel_buffer[3]);
-    accel_raw[2] = deviceBMI088ParseRawData(accel_buffer[4], accel_buffer[5]);
+    if (deviceBMI088ParseRawData(instance) == false) {
+        return DEVICE_BMI088_ERROR;
+    }
 
-    gyro_raw[0] = deviceBMI088ParseRawData(gyro_buffer[0], gyro_buffer[1]);
-    gyro_raw[1] = deviceBMI088ParseRawData(gyro_buffer[2], gyro_buffer[3]);
-    gyro_raw[2] = deviceBMI088ParseRawData(gyro_buffer[4], gyro_buffer[5]);
+    return DEVICE_BMI088_OK;
+}
 
-    instance->data_.accel_raw_[0] = accel_raw[0];
-    instance->data_.accel_raw_[1] = accel_raw[1];
-    instance->data_.accel_raw_[2] = accel_raw[2];
+// 使用DMA传输更新数据,开启一次DMA传输
+deviceBMI088Status_e deviceBMI088UpdateDataDMAStart(deviceBMI088Instance_t *instance)
+{
+    if (instance == NULL || instance->is_initialized_ == false) {
+        return DEVICE_BMI088_ERROR;
+    }
 
-    instance->data_.gyro_raw_[0] = gyro_raw[0];
-    instance->data_.gyro_raw_[1] = gyro_raw[1];
-    instance->data_.gyro_raw_[2] = gyro_raw[2];
+    if (instance->mode_ != DEVICE_BMI088_EXTI_DMA) {
+        return DEVICE_BMI088_ERROR;
+    }
 
-    float data[3];
+    switch (instance->dma_xfer_state_) {
+        case DEVICE_BMI088_DMA_XFER_IDLE:
+            deviceBMI088DeselectAllTarget(instance);
+            deviceBMI088SelectTarget(instance, DEVICE_BMI088_TARGET_ACCEL);
+            memset(instance->dma_xfer_tx_buffer_, DUMMY_BYTE, sizeof(instance->dma_xfer_tx_buffer_));
+            memset(instance->dma_xfer_rx_buffer_, 0, sizeof(instance->dma_xfer_rx_buffer_));
+            instance->dma_xfer_tx_buffer_[0] = DEVICE_BMI088_REG_TO_READ_CMD(ACC_X_LSB_ADDR);
+            // 开启DMA传输
+            // 先切换状态，防止立刻进入SPI TXRX CPLT回调，导致状态切换错误
+            instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_ACCESS_ACCEL;
+            bspSPIStatus_e spi_status;
+            spi_status = bspSPITransmitReceive(instance->spi_instance_, 
+                                                instance->dma_xfer_tx_buffer_, 
+                                                instance->dma_xfer_rx_buffer_, 
+                                                ACC_XYZ_LEN + 2U); // ACC_XYZ_LEN + 2U是因为读取ACCEL时，在寄存器地址后，还会多一个无意义字节
+            if (spi_status != BSP_SPI_OK) {
+                deviceBMI088DeselectAllTarget(instance);
+                resetDMAXfer(instance);
+                return DEVICE_BMI088_ERROR;
+            }
+            break;
 
-    // 当前换算系数对应 init() 里固定写入的量程配置，accel_单位为m/s^2，gyro_单位为rad/s
-    data[0] = ((float)accel_raw[0] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
-    data[1] = ((float)accel_raw[1] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
-    data[2] = ((float)accel_raw[2] / DEVICE_BMI088_ACCEL_SENSITIVITY_6G) * STANDARD_GRAVITY_M_S2;
-    deviceBMI088MapDataByInstallTransform(instance, data, instance->data_.accel_ms2_);
+        case DEVICE_BMI088_DMA_XFER_ERROR:
+            resetDMAXfer(instance);
 
-    data[0] = ((float)gyro_raw[0] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
-    data[1] = ((float)gyro_raw[1] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
-    data[2] = ((float)gyro_raw[2] / DEVICE_BMI088_GYRO_SENSITIVITY_2000DPS) * DEG_TO_RAD;
-    deviceBMI088MapDataByInstallTransform(instance, data, instance->data_.gyro_rads_);
+        case DEVICE_BMI088_DMA_XFER_ACCESS_ACCEL:
+        case DEVICE_BMI088_DMA_XFER_ACCESS_GYRO:
+        case DEVICE_BMI088_DMA_XFER_RAW_DATA_READY:
+            return DEVICE_BMI088_ERROR;
+    }
+
+    return DEVICE_BMI088_OK;
+}
+
+// 当DMA传输一次完整数据完成时，调用该函数以更新IMU数据
+deviceBMI088Status_e deviceBMI088UpdateDataDMAProcess(deviceBMI088Instance_t *instance, bool *new_data_ready)
+{
+    if (instance == NULL || new_data_ready == NULL || instance->is_initialized_ == false) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    *new_data_ready = false;
+
+    if (instance->mode_ != DEVICE_BMI088_EXTI_DMA) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    switch (instance->dma_xfer_state_) {
+        case DEVICE_BMI088_DMA_XFER_RAW_DATA_READY:
+            if (deviceBMI088ParseRawData(instance) == false) {
+                return DEVICE_BMI088_ERROR;
+            }
+            *new_data_ready = true;
+            instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_IDLE;
+            break;
+        
+        case DEVICE_BMI088_DMA_XFER_ERROR:
+            resetDMAXfer(instance);
+
+        case DEVICE_BMI088_DMA_XFER_IDLE:
+        case DEVICE_BMI088_DMA_XFER_ACCESS_ACCEL:
+        case DEVICE_BMI088_DMA_XFER_ACCESS_GYRO:
+            return DEVICE_BMI088_BUSY;
+    }
 
     return DEVICE_BMI088_OK;
 }
@@ -515,6 +789,13 @@ deviceBMI088Status_e deviceBMI088ConfigGyroDataReadyIT(deviceBMI088Instance_t *i
         return DEVICE_BMI088_ERROR;
     }
 
+    // BMI088数据就绪中断配置也使用阻塞读取！
+    bspSPIStatus_e spi_status;
+    spi_status = bspSPIChangeWorkMode(instance->spi_instance_, BSP_SPI_WORK_MODE_BLOCKING);
+    if (spi_status != BSP_SPI_OK) {
+        return DEVICE_BMI088_ERROR;
+    }
+
     bool state = true;
 
     // 官方流程是先映射再配置电气化，最后使能中断
@@ -545,6 +826,12 @@ deviceBMI088Status_e deviceBMI088ConfigGyroDataReadyIT(deviceBMI088Instance_t *i
                                             GYRO_INT_CTRL_ADDR, 
                                             GYRO_INT_CTRL_IT_ENABLE_VAL);
     if (state == false) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    // 切换到对应的SPI模式
+    deviceBMI088DelayUs(instance, DEVICE_BMI088_BUS_IDLE_DELAY_US);
+    if (changeSPIWorkModeByBMI088Config(instance) == false) {
         return DEVICE_BMI088_ERROR;
     }
 
