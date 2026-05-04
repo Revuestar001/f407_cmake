@@ -115,23 +115,34 @@ bspSPIStatus_e bspSPITransmitReceive(bspSPIInstance_t *instance, uint8_t *tx_buf
             status_hal = HAL_SPI_TransmitReceive(instance->spi_handle_, tx_buffer, rx_buffer, data_size, BSP_SPI_BLOCKING_TIMEOUT);
             return bspSPIGetStatusFromHAL(status_hal);
         case BSP_SPI_WORK_MODE_IT:
+            // 开启异步传输前，保存本次传输任务的缓冲区信息
+            // IT DMA传输开启后，该函数返回
+            // 一次传输完成后，触发回调，spi实例调用owner回调函数
+            // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+            instance->tx_buffer_ptr_this_transfer_ = tx_buffer;
+            instance->rx_buffer_ptr_this_transfer_ = rx_buffer;
+            instance->data_size_this_transfer_ = data_size;
             status_hal = HAL_SPI_TransmitReceive_IT(instance->spi_handle_, tx_buffer, rx_buffer, data_size);
             break;
         case BSP_SPI_WORK_MODE_DMA:
+            // 开启异步传输前，保存本次传输任务的缓冲区信息
+            // IT DMA传输开启后，该函数返回
+            // 一次传输完成后，触发回调，spi实例调用owner回调函数
+            // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+            instance->tx_buffer_ptr_this_transfer_ = tx_buffer;
+            instance->rx_buffer_ptr_this_transfer_ = rx_buffer;
+            instance->data_size_this_transfer_ = data_size;
             status_hal = HAL_SPI_TransmitReceive_DMA(instance->spi_handle_, tx_buffer, rx_buffer, data_size);
             break;
         default:
             return BSP_SPI_ERROR;
     }
 
-    if (status_hal == HAL_OK) {
-        // 成功开启异步传输后，保存本次传输任务的缓冲区信息
-        // IT DMA传输开启后，该函数返回
-        // 一次传输完成后，触发回调，spi实例调用owner回调函数
-        // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
-        instance->tx_buffer_ptr_this_transfer_ = tx_buffer;
-        instance->rx_buffer_ptr_this_transfer_ = rx_buffer;
-        instance->data_size_this_transfer_ = data_size;
+    if (status_hal != HAL_OK) {
+        // 开启异步传输失败，清空本次传输任务的缓冲区信息
+        instance->tx_buffer_ptr_this_transfer_ = NULL;
+        instance->rx_buffer_ptr_this_transfer_ = NULL;
+        instance->data_size_this_transfer_ = 0U;
     }
 
     return bspSPIGetStatusFromHAL(status_hal);
@@ -160,23 +171,34 @@ bspSPIStatus_e bspSPITransmit(bspSPIInstance_t *instance, uint8_t *tx_buffer, ui
             status_hal = HAL_SPI_Transmit(instance->spi_handle_, tx_buffer, data_size, BSP_SPI_BLOCKING_TIMEOUT);
             return bspSPIGetStatusFromHAL(status_hal);
         case BSP_SPI_WORK_MODE_IT:
+            // 开启异步传输前，保存本次传输任务的缓冲区信息
+            // IT DMA传输开启后，该函数返回
+            // 一次传输完成后，触发回调，spi实例调用owner回调函数
+            // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+            instance->tx_buffer_ptr_this_transfer_ = tx_buffer;
+            instance->rx_buffer_ptr_this_transfer_ = NULL;
+            instance->data_size_this_transfer_ = data_size;
             status_hal = HAL_SPI_Transmit_IT(instance->spi_handle_, tx_buffer, data_size);
             break;
         case BSP_SPI_WORK_MODE_DMA:
+            // 开启异步传输前，保存本次传输任务的缓冲区信息
+            // IT DMA传输开启后，该函数返回
+            // 一次传输完成后，触发回调，spi实例调用owner回调函数
+            // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+            instance->tx_buffer_ptr_this_transfer_ = tx_buffer;
+            instance->rx_buffer_ptr_this_transfer_ = NULL;
+            instance->data_size_this_transfer_ = data_size;
             status_hal = HAL_SPI_Transmit_DMA(instance->spi_handle_, tx_buffer, data_size);
             break;
         default:
             return BSP_SPI_ERROR;
     }
 
-    if (status_hal == HAL_OK) {
-        // 成功开启异步传输后，保存本次传输任务的缓冲区信息
-        // IT DMA传输开启后，该函数返回
-        // 一次传输完成后，触发回调，spi实例调用owner回调函数
-        // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
-        instance->tx_buffer_ptr_this_transfer_ = tx_buffer;
+    if (status_hal != HAL_OK) {
+        // 开启异步传输失败，清空本次传输任务的缓冲区信息
+        instance->tx_buffer_ptr_this_transfer_ = NULL;
         instance->rx_buffer_ptr_this_transfer_ = NULL;
-        instance->data_size_this_transfer_ = data_size;
+        instance->data_size_this_transfer_ = 0U;
     }
 
     return bspSPIGetStatusFromHAL(status_hal);
@@ -205,23 +227,34 @@ bspSPIStatus_e bspSPIReceive(bspSPIInstance_t *instance, uint8_t *rx_buffer, uin
             status_hal = HAL_SPI_Receive(instance->spi_handle_, rx_buffer, data_size, BSP_SPI_BLOCKING_TIMEOUT);
             return bspSPIGetStatusFromHAL(status_hal);
         case BSP_SPI_WORK_MODE_IT:
+            // 开启异步传输前，保存本次传输任务的缓冲区信息
+            // IT DMA传输开启后，该函数返回
+            // 一次传输完成后，触发回调，spi实例调用owner回调函数
+            // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+            instance->tx_buffer_ptr_this_transfer_ = NULL;
+            instance->rx_buffer_ptr_this_transfer_ = rx_buffer;
+            instance->data_size_this_transfer_ = data_size;
             status_hal = HAL_SPI_Receive_IT(instance->spi_handle_, rx_buffer, data_size);
             break;
         case BSP_SPI_WORK_MODE_DMA:
+            // 开启异步传输前，保存本次传输任务的缓冲区信息
+            // IT DMA传输开启后，该函数返回
+            // 一次传输完成后，触发回调，spi实例调用owner回调函数
+            // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+            instance->tx_buffer_ptr_this_transfer_ = NULL;
+            instance->rx_buffer_ptr_this_transfer_ = rx_buffer;
+            instance->data_size_this_transfer_ = data_size;
             status_hal = HAL_SPI_Receive_DMA(instance->spi_handle_, rx_buffer, data_size);
             break;
         default:
             return BSP_SPI_ERROR;
     }
 
-    if (status_hal == HAL_OK) {
-        // 成功开启异步传输后，保存本次传输任务的缓冲区信息
-        // IT DMA传输开启后，该函数返回
-        // 一次传输完成后，触发回调，spi实例调用owner回调函数
-        // 由于是异步传输，因此spi需要保存本次传输的缓冲区信息
+    if (status_hal != HAL_OK) {
+        // 开启异步传输失败，清空本次传输任务的缓冲区信息
         instance->tx_buffer_ptr_this_transfer_ = NULL;
-        instance->rx_buffer_ptr_this_transfer_ = rx_buffer;
-        instance->data_size_this_transfer_ = data_size;
+        instance->rx_buffer_ptr_this_transfer_ = NULL;
+        instance->data_size_this_transfer_ = 0U;
     }
 
     return bspSPIGetStatusFromHAL(status_hal);

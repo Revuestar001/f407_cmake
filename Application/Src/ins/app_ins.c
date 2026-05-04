@@ -166,7 +166,7 @@ typedef struct app_ins
     deviceBMI088Data_t latest_imu_data_;
     deviceIST8310Data_t latest_mag_data_;
     // MAG 中断到来，只置位，不直接在 ISR 里读 I2C
-    bool mag_new_data_ready_;
+    volatile bool mag_new_data_ready_;
     // 表示至少已经成功拿到一帧有效 MAG 数据
     bool mag_data_valid_;
 
@@ -179,6 +179,9 @@ typedef struct app_ins
     uint64_t last_ekf_imu_timestamp_us_;
 
     appINSMagRecordData_t mag_record_data_; // 磁力计调试记录数据
+
+    volatile bool imu_drdy_pending_; // IMU数据就绪中断挂起标志
+    volatile bool imu_dma_error_pending_; // IMU DMA传输错误中断挂起标志
 
     uint16_t error_count_;
 } appINSInstance_t;
@@ -614,7 +617,7 @@ static void appINSProcessAccelSixFaceCalibrate(void)
     }
 }
 
-// IMU 中断只负责唤醒 INS 任务
+// IMU Gyro数据就绪中断负责唤醒 INS 任务
 static void appINSIMUDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *gpio_instance)
 {
     (void)gpio_instance;
@@ -622,8 +625,28 @@ static void appINSIMUDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *
 
     instance->observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
 
+    instance->imu_drdy_pending_ = true; // 新数据就绪，挂起标志
+
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     vTaskNotifyGiveFromISR(instance->task_handle_, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+// IMU DMA传输完成回调，走同一个task notify通知任务
+static void appINSIMUDMAXferCpltCallback(void)
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(app_ins_.task_handle_, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+// IMU DMA传输错误回调，走同一个task notify通知任务
+static void appINSIMUDMAXferErrorCallback(void)
+{
+    app_ins_.imu_dma_error_pending_ = true; // DMA传输错误，挂起标志
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(app_ins_.task_handle_, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
@@ -645,9 +668,9 @@ static bool appINSIMUDataReadyInterruptRegister(bspGPIOInstance_t *accel_int, bs
         return false;
     }
 
-    if (accel_int != NULL) {
-        bspGPIOIsrCallbackRegister(accel_int, &app_ins_, appINSIMUDataReadyInterruptCallback);
-    }
+    // if (accel_int != NULL) {
+    //     bspGPIOIsrCallbackRegister(accel_int, &app_ins_, appINSIMUDataReadyInterruptCallback);
+    // }
 
     if (gyro_int != NULL) {
         bspGPIOIsrCallbackRegister(gyro_int, &app_ins_, appINSIMUDataReadyInterruptCallback);
@@ -725,7 +748,9 @@ static bool appINSInit(void)
     bmi088_config.accel_cs_ = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_ACCEL);
     bmi088_config.gyro_cs_ = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_GYRO);
     bmi088_config.delay_us_callback_ = bspDWTDelayUs;
-    bmi088_config.mode_ = DEVICE_BMI088_EXTI;
+    bmi088_config.mode_ = DEVICE_BMI088_EXTI_DMA;
+    bmi088_config.dma_xfer_cplt_notify_callback_from_isr_ = appINSIMUDMAXferCpltCallback;
+    bmi088_config.dma_xfer_error_notify_callback_from_isr_ = appINSIMUDMAXferErrorCallback;
     bmi088_config.name_ = "IMU";
 
     app_ins_.bmi088_instance_ = deviceBMI088InstanceInit(&bmi088_config);
@@ -798,19 +823,9 @@ static bool appINSInit(void)
     return true;
 }
 
-// 更新 IMU latest snapshot，并生成一份校准后的 observation
-static bool appINSUpdateIMUSample(void)
+// IMU数据已经更新完毕，获取最新数据，并生成一份校准后的 observation
+static bool appINSConsumeLatestIMUSample(void)
 {
-    if (app_ins_.stage_ == APP_INS_REINIT) {
-        return false;
-    }
-
-    if (deviceBMI088UpdateData(app_ins_.bmi088_instance_) != DEVICE_BMI088_OK) {
-        app_ins_.error_count_++;
-        app_ins_.stage_ = APP_INS_DEGRADED;
-        return false;
-    }
-
     if (deviceBMI088GetDataByOutputFrame(app_ins_.bmi088_instance_, &app_ins_.latest_imu_data_, DEVICE_BMI088_OUTPUT_FRAME_FLU) != DEVICE_BMI088_OK) {
         app_ins_.error_count_++;
         app_ins_.stage_ = APP_INS_DEGRADED;
@@ -826,6 +841,28 @@ static bool appINSUpdateIMUSample(void)
     appINSApplyAccelBiasScale(app_ins_.latest_imu_data_.accel_ms2_, app_ins_.calibrate_data_.accel_bias_ms2_, app_ins_.calibrate_data_.accel_scale_, app_ins_.observation_data_.accel_offline_corrected_ms2_);
     // 不在这里记录时间戳，应该在drdy中断中记录
     // app_ins_.observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
+
+    return true;
+}
+
+// 更新 IMU latest snapshot，并生成一份校准后的 observation
+static bool appINSUpdateIMUSample(void)
+{
+    if (app_ins_.stage_ == APP_INS_REINIT) {
+        return false;
+    }
+
+    if (deviceBMI088UpdateData(app_ins_.bmi088_instance_) != DEVICE_BMI088_OK) {
+        app_ins_.error_count_++;
+        app_ins_.stage_ = APP_INS_DEGRADED;
+        return false;
+    }
+    
+    if (appINSConsumeLatestIMUSample() == false) {
+        app_ins_.error_count_++;
+        app_ins_.stage_ = APP_INS_DEGRADED;
+        return false;
+    }
 
     return true;
 }
@@ -1008,12 +1045,64 @@ void appINSTaskEntry(void *argument)
         osDelay(pdMS_TO_TICKS(APP_INS_TRY_INIT_DELAY_MS));
     }
 
+    deviceBMI088Mode_e bmi088_mode;
+    deviceBMI088GetMode(app_ins_.bmi088_instance_, &bmi088_mode);
+
     for (;;) {
         uint32_t notify_count = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(APP_INS_MAX_UPDATE_WAIT_MS));
 
         if (notify_count > 0U) {
             // 收到 IMU 通知，更新一帧 IMU 数据
-            appINSUpdateIMUSample();
+            switch (bmi088_mode) {
+                case DEVICE_BMI088_EXTI_DMA:
+                    // 通过DMA传输模式更新IMU数据
+                    bool new_data_ready = false;
+                    deviceBMI088Status_e bmi088_status;
+                    // IMU DMA传输错误标志挂起，进行错误处理
+                    if (app_ins_.imu_dma_error_pending_ == true) {
+                        app_ins_.imu_dma_error_pending_ = false;
+                        app_ins_.error_count_++;
+                        app_ins_.stage_ = APP_INS_DEGRADED;
+                    }
+                    // 请注意，本次IMU通知时，可能同时存在本次DMA传输完成和DRDY中断就绪
+                    // 这里先处理本次DMA传输，再处理IMU DRDY标志挂起，开启新一轮DMA传输
+                    // 处理本次DMA传输，推进下一笔SPI传输(gyro)，或者本次DMA的两笔SPI传输完成，更新数据
+                    bmi088_status = deviceBMI088UpdateDataDMAProcess(app_ins_.bmi088_instance_, &new_data_ready);
+                    if (bmi088_status == DEVICE_BMI088_OK && new_data_ready == true) {
+                        // 新IMU数据已更新
+                        if (appINSConsumeLatestIMUSample() == false) {
+                            app_ins_.error_count_++;
+                            app_ins_.stage_ = APP_INS_DEGRADED;
+                        }
+                    } else if (bmi088_status != DEVICE_BMI088_BUSY) {
+                        app_ins_.error_count_++;
+                        app_ins_.stage_ = APP_INS_DEGRADED;
+                    }
+
+                    // IMU数据就绪标志挂起，说明要开启新一轮DMA传输
+                    if (app_ins_.imu_drdy_pending_ == true) {
+                        app_ins_.imu_drdy_pending_ = false;
+
+                        bmi088_status = deviceBMI088UpdateDataDMAStart(app_ins_.bmi088_instance_);
+                        if (bmi088_status == DEVICE_BMI088_BUSY) {
+                            // 当前仍有上一轮DMA事务未完全收尾，本次DRDY先跳过，等待后续通知重试
+                        } else if (bmi088_status != DEVICE_BMI088_OK) {
+                            app_ins_.error_count_++;
+                            app_ins_.stage_ = APP_INS_DEGRADED;
+                        }
+                    }
+                    break;
+
+                case DEVICE_BMI088_BLOCKING:
+                case DEVICE_BMI088_EXTI:
+                    // 通过同步传输模式更新IMU数据
+                    appINSUpdateIMUSample();
+                    break;
+                
+                default:
+                    app_ins_.error_count_++;
+                    break;
+            }
         } else {
             // 没有收到 IMU 通知，先记一次超时
             app_ins_.error_count_++;

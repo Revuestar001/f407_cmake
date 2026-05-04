@@ -93,7 +93,7 @@ deviceBMI088Status_e deviceBMI088Init(deviceBMI088Instance_t *instance);
 deviceBMI088Status_e deviceBMI088UpdateData(deviceBMI088Instance_t *instance);
 // 使用DMA传输更新数据,开启一次DMA传输
 deviceBMI088Status_e deviceBMI088UpdateDataDMAStart(deviceBMI088Instance_t *instance);
-// 当DMA传输一次完整数据完成时，调用该函数以更新IMU数据
+// 开启DMA传输后，调用该函数以推进DMA传输流程，若传输完成则更新IMU数据
 deviceBMI088Status_e deviceBMI088UpdateDataDMAProcess(deviceBMI088Instance_t *instance, bool *new_data_ready);
 
 // 获取当前传感器数据，对于c板来说，bmi088直接输出的accel和gyro本来就定义在FLU下，注意F是robomaster字体为正时指向前部，即uart2标识-->uart1标识

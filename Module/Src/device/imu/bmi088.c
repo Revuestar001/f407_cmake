@@ -43,6 +43,7 @@ typedef enum
 {
     DEVICE_BMI088_DMA_XFER_IDLE = 0, // 空闲，无DMA传输任务
     DEVICE_BMI088_DMA_XFER_ACCESS_ACCEL,
+    DEVICE_BMI088_DMA_XFER_ACCESS_GYRO_PENDING, // 读取gyro挂起状态,该状态下会尝试发起gyro DMA传输
     DEVICE_BMI088_DMA_XFER_ACCESS_GYRO,
     DEVICE_BMI088_DMA_XFER_RAW_DATA_READY,
     DEVICE_BMI088_DMA_XFER_ERROR,
@@ -450,29 +451,13 @@ static void deviceBMI088DMAXferCallback(void *owner, uint8_t *tx_buffer_ptr, uin
             deviceBMI088DeselectAllTarget(instance);
             // 拷贝数据
             memcpy(instance->accel_raw_uint8_buffer, rx_buffer_ptr + 2, ACC_XYZ_LEN);
-
-            deviceBMI088SelectTarget(instance, DEVICE_BMI088_TARGET_GYRO);
-            memset(instance->dma_xfer_tx_buffer_, DUMMY_BYTE, sizeof(instance->dma_xfer_tx_buffer_));
-            memset(instance->dma_xfer_rx_buffer_, 0, sizeof(instance->dma_xfer_rx_buffer_));
-            instance->dma_xfer_tx_buffer_[0] = DEVICE_BMI088_REG_TO_READ_CMD(GYRO_RATE_X_LSB_ADDR);
-            // 开启DMA传输
-            // 先切换状态，防止立刻进入SPI TXRX CPLT回调，导致状态切换错误
-            instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_ACCESS_GYRO;
-            bspSPIStatus_e spi_status;
-            spi_status = bspSPITransmitReceive(instance->spi_instance_, 
-                                                instance->dma_xfer_tx_buffer_, 
-                                                instance->dma_xfer_rx_buffer_, 
-                                                GYRO_XYZ_LEN + 1U);
-            if (spi_status != BSP_SPI_OK) {
-                deviceBMI088DeselectAllTarget(instance);
-                resetDMAXfer(instance);
-                if (instance->dma_xfer_error_notify_callback_from_isr_ != NULL) {
-                    instance->dma_xfer_error_notify_callback_from_isr_();
-                }
-                return;
+            // 不在DMA完成回调中直接续发下一段DMA，避免HAL SPI/DMA句柄仍未完全ready时再次启动
+            // 测试发现直接再回调内开启下一次DMA，很容易导致SPI外设错误
+            instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_ACCESS_GYRO_PENDING;
+            if (instance->dma_xfer_cplt_notify_callback_from_isr_ != NULL) {
+                // 这一笔SPI传输完成，通知任务，进行下一笔SPI传输
+                instance->dma_xfer_cplt_notify_callback_from_isr_();
             }
-
-            *xfer_continue = true;
             break;
 
         case DEVICE_BMI088_DMA_XFER_ACCESS_GYRO:
@@ -490,6 +475,7 @@ static void deviceBMI088DMAXferCallback(void *owner, uint8_t *tx_buffer_ptr, uin
             resetDMAXfer(instance);
 
         case DEVICE_BMI088_DMA_XFER_IDLE:
+        case DEVICE_BMI088_DMA_XFER_ACCESS_GYRO_PENDING:
         case DEVICE_BMI088_DMA_XFER_RAW_DATA_READY:
             return;
     }
@@ -688,23 +674,30 @@ deviceBMI088Status_e deviceBMI088UpdateDataDMAStart(deviceBMI088Instance_t *inst
             if (spi_status != BSP_SPI_OK) {
                 deviceBMI088DeselectAllTarget(instance);
                 resetDMAXfer(instance);
+                if (spi_status == BSP_SPI_BUSY) {
+                    // SPI正忙，DMA开启失败，等待下次开启DMA
+                    // 不返回DEVICE_BMI088_ERROR
+                    return DEVICE_BMI088_BUSY;
+                }
                 return DEVICE_BMI088_ERROR;
             }
             break;
 
         case DEVICE_BMI088_DMA_XFER_ERROR:
             resetDMAXfer(instance);
+            return DEVICE_BMI088_ERROR;
 
         case DEVICE_BMI088_DMA_XFER_ACCESS_ACCEL:
+        case DEVICE_BMI088_DMA_XFER_ACCESS_GYRO_PENDING:
         case DEVICE_BMI088_DMA_XFER_ACCESS_GYRO:
         case DEVICE_BMI088_DMA_XFER_RAW_DATA_READY:
-            return DEVICE_BMI088_ERROR;
+            return DEVICE_BMI088_BUSY;
     }
 
     return DEVICE_BMI088_OK;
 }
 
-// 当DMA传输一次完整数据完成时，调用该函数以更新IMU数据
+// 开启DMA传输后，调用该函数以推进DMA传输流程，若传输完成则更新IMU数据
 deviceBMI088Status_e deviceBMI088UpdateDataDMAProcess(deviceBMI088Instance_t *instance, bool *new_data_ready)
 {
     if (instance == NULL || new_data_ready == NULL || instance->is_initialized_ == false) {
@@ -718,6 +711,34 @@ deviceBMI088Status_e deviceBMI088UpdateDataDMAProcess(deviceBMI088Instance_t *in
     }
 
     switch (instance->dma_xfer_state_) {
+        case DEVICE_BMI088_DMA_XFER_ACCESS_GYRO_PENDING:
+            // 读取gyro挂起状态,该状态下会尝试发起gyro DMA传输
+            deviceBMI088DeselectAllTarget(instance);
+            deviceBMI088SelectTarget(instance, DEVICE_BMI088_TARGET_GYRO);
+            memset(instance->dma_xfer_tx_buffer_, DUMMY_BYTE, sizeof(instance->dma_xfer_tx_buffer_));
+            memset(instance->dma_xfer_rx_buffer_, 0, sizeof(instance->dma_xfer_rx_buffer_));
+            instance->dma_xfer_tx_buffer_[0] = DEVICE_BMI088_REG_TO_READ_CMD(GYRO_RATE_X_LSB_ADDR);
+            instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_ACCESS_GYRO;
+
+            bspSPIStatus_e spi_status;
+            spi_status = bspSPITransmitReceive(instance->spi_instance_,
+                                               instance->dma_xfer_tx_buffer_,
+                                               instance->dma_xfer_rx_buffer_,
+                                               GYRO_XYZ_LEN + 1U);
+            if (spi_status != BSP_SPI_OK) {
+                deviceBMI088DeselectAllTarget(instance);
+                if (spi_status == BSP_SPI_BUSY) {
+                    // SPI正忙，DMA开启失败，保留pending状态，等待下次开启DMA
+                    // 不返回DEVICE_BMI088_ERROR
+                    instance->dma_xfer_state_ = DEVICE_BMI088_DMA_XFER_ACCESS_GYRO_PENDING;
+                    return DEVICE_BMI088_BUSY;
+                }
+
+                resetDMAXfer(instance);
+                return DEVICE_BMI088_ERROR;
+            }
+            return DEVICE_BMI088_BUSY;
+
         case DEVICE_BMI088_DMA_XFER_RAW_DATA_READY:
             if (deviceBMI088ParseRawData(instance) == false) {
                 return DEVICE_BMI088_ERROR;
