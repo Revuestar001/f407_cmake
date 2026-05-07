@@ -8,6 +8,7 @@
 static bool dwt_is_initialized_ = false;
 static uint32_t dwt_last_cnt_ = 0;
 static uint64_t dwt_timestamp_us_ = 0;
+static uint64_t dwt_remainder_ = 0; // 除法余数
 
 // 进入临界区
 static uint32_t bspDWTEnterCritical(void)
@@ -41,8 +42,10 @@ void bspDWTInit(void)
     // 使能CYCCNT寄存器，由DWT_CTRL(0xE0001000)的第0位控制
     DWT->CTRL = (uint32_t)1 << 0U;
 
-    dwt_last_cnt_ = 0;
-    dwt_timestamp_us_ = 0;
+    dwt_last_cnt_ = 0U;
+    dwt_timestamp_us_ = 0ULL;
+    dwt_remainder_ = 0ULL;
+
     dwt_is_initialized_ = true;
 }
 
@@ -105,11 +108,18 @@ uint64_t bspDWTGetAbsTimeUs(void)
     uint32_t delta_cnt = now_cnt - dwt_last_cnt_;
 
     // 不直接用bspDWTGetElapsedTimeUs累加，是为了防止累积舍入误差
-    dwt_timestamp_us_ += ((uint64_t)delta_cnt * 1000000ULL) / SystemCoreClock;
+    // 加上除法产生的余数
+    uint64_t with_remainder = (uint64_t)delta_cnt * 1000000ULL + dwt_remainder_;
+    dwt_timestamp_us_ += with_remainder / SystemCoreClock; // 除法产生余数
+    dwt_remainder_ = with_remainder % SystemCoreClock; // 保存本次除法的余数
+
     dwt_last_cnt_ = now_cnt;
+
+    // 在临界区内保存时间戳，防止在临界区外返回静态全局变量
+    uint64_t timestamp_us = dwt_timestamp_us_;
 
     // 退出临界区
     bspDWTExitCritical(primask);
 
-    return dwt_timestamp_us_;
+    return timestamp_us;
 }
