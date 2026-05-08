@@ -2,8 +2,9 @@
 #include "bsp_gpio.h"
 #include "bsp_uart.h"
 #include "bsp_spi.h"
-#include "bsp_can.h"
+// #include "bsp_can.h"
 #include "bsp_i2c.h"
+#include "bsp_fdcan.h"
 #include "bsp_def.h"
 
 // GPIO
@@ -47,7 +48,16 @@ typedef enum
     BSP_CAN_MAX
 } bspCANId_e;
 
-bspCANInstance_t *bspBoardGetCANInstance(bspCANId_e can_id);
+// bspCANInstance_t *bspBoardGetCANInstance(bspCANId_e can_id);
+
+// FDCAN
+typedef enum
+{
+    BSP_FDCAN_1 = 0,
+    BSP_FDCAN_MAX
+} bspFDCANId_e;
+
+bspFDCANInstance_t *bspBoardGetFDCANInstance(bspFDCANId_e fdcan_id);
 
 // I2C
 typedef enum 

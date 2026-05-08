@@ -19,7 +19,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Set the project name
-set(CMAKE_PROJECT_NAME RoboF407Cmake)
+set(CMAKE_PROJECT_NAME G431Cmake)
 
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
@@ -42,29 +42,32 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
 )
 
-# Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Bsp/Src/bsp_gpio/bsp_gpio.c
     Bsp/Src/bsp_uart/bsp_uart.c
     Bsp/Src/bsp_spi/bsp_spi.c
-    Bsp/Src/bsp_can/bsp_can.c
+    # Bsp/Src/bsp_can/bsp_can.c
     Bsp/Src/bsp_dwt/bsp_dwt.c
     Bsp/Src/bsp_i2c/bsp_i2c.c
     Bsp/Src/bsp_critical/bsp_critical.c
+    Bsp/Src/bsp_flash/bsp_flash.c
+    Bsp/Src/bsp_fdcan/bsp_fdcan.c
     Bsp/Src/bsp_board.c
 
     Module/Src/util/ring_buffer.c
+    Module/Src/util/crc16.c
+    Module/Src/util/crc32.c
     Module/Src/protocol/sbus.c
     Module/Src/rc_mapper/rc_mapper.c
-    Module/Src/motor_actuator/motor_actuator.c
-    Module/Src/motor_actuator/motor_actuator_group.c
-    Module/Src/motor_actuator/motor_actuator_dji_adapter.c
-    Module/Src/motor_actuator/motor_actuator_myactuator_adapter.c
+    # Module/Src/motor_actuator/motor_actuator.c
+    # Module/Src/motor_actuator/motor_actuator_group.c
+    # Module/Src/motor_actuator/motor_actuator_dji_adapter.c
+    # Module/Src/motor_actuator/motor_actuator_myactuator_adapter.c
     Module/Src/device/imu/bmi088.c
     Module/Src/device/magnetometer/ist8310.c
-    Module/Src/device/motor/dji_m3508.c
-    Module/Src/device/motor/rmd_v2_x6.c
+    # Module/Src/device/motor/dji_m3508.c
+    # Module/Src/device/motor/rmd_v2_x6.c
     Module/Src/algorithm/math/quaternion.c
     Module/Src/algorithm/math/vector3.c
     Module/Src/algorithm/math/matrix.c
@@ -76,15 +79,15 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Src/topic_bus/topic_bus.c
     Module/Src/serial_stream/serial_stream.c
 
-    Application/Src/remote_control/app_remote_control.c
-    Application/Src/imu/app_imu.c
-    Application/Src/ins/app_ins.c
-    Application/Src/chassis/app_chassis.c
-    Application/Src/chassis/chassis_platform.c
-    Application/Src/app_topic_bus_test.c
+    # Application/Src/remote_control/app_remote_control.c
+    # Application/Src/imu/app_imu.c
+    # Application/Src/ins/app_ins.c
+    # Application/Src/chassis/app_chassis.c
+    # Application/Src/chassis/chassis_platform.c
+    # Application/Src/app_topic_bus_test.c
     Application/Src/topics/app_topics.c
     Application/Src/log/app_log.c
-    Application/Src/app_uart6_serial_stream_rx_test.c
+    # Application/Src/app_uart6_serial_stream_rx_test.c
 )
 
 # Add include paths
@@ -93,19 +96,21 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Inc/bsp_gpio/
     Bsp/Inc/bsp_uart/
     Bsp/Inc/bsp_spi/
-    Bsp/Inc/bsp_can/
+    # Bsp/Inc/bsp_can/
     Bsp/Inc/bsp_dwt/
     Bsp/Inc/bsp_i2c/
     Bsp/Inc/bsp_critical/
+    Bsp/Inc/bsp_flash/
+    Bsp/Inc/bsp_fdcan/
     Bsp/Inc/
 
     Module/Inc/util/
     Module/Inc/protocol/
     Module/Inc/rc_mapper/
-    Module/Inc/motor_actuator/
+    # Module/Inc/motor_actuator/
     Module/Inc/device/imu/
     Module/Inc/device/magnetometer/
-    Module/Inc/device/motor/
+    # Module/Inc/device/motor/
     Module/Inc/algorithm/math/
     Module/Inc/algorithm/eskf/
     Module/Inc/algorithm/pid/
@@ -113,10 +118,10 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Module/Inc/topic_bus/
     Module/Inc/serial_stream/
 
-    Application/Inc/remote_control/
-    Application/Inc/imu/
-    Application/Inc/ins/
-    Application/Inc/chassis/
+    # Application/Inc/remote_control/
+    # Application/Inc/imu/
+    # Application/Inc/ins/
+    # Application/Inc/chassis/
     Application/Inc/topics/
     Application/Inc/messages/
     Application/Inc/log/

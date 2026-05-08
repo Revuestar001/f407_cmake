@@ -1,4 +1,5 @@
 #include "FreeRTOS.h"
+#include "bsp_dwt.h"
 #include "bsp_uart.h"
 #include "cmsis_os2.h"
 #include "portmacro.h"
@@ -95,7 +96,8 @@ static int appLogFormatINSLine(char *buffer, size_t buffer_size, const msgINS_t 
         return -1;
     }
 
-    timestamp_ms = (uint32_t)(message->timestamp_ / 1000ULL);
+    uint64_t timestamp_us = bspDWTGetAbsTimeUs();
+    timestamp_ms = (uint32_t)(timestamp_us / 1000ULL);
     roll_centi_deg = appLogFloatToCentiDeg(message->euler_zyx_deg_[2]);
     pitch_centi_deg = appLogFloatToCentiDeg(message->euler_zyx_deg_[1]);
     yaw_centi_deg = appLogFloatToCentiDeg(message->euler_zyx_deg_[0]);
@@ -250,13 +252,13 @@ void appLogTaskEntry(void *argument)
         bspUARTStatus_e tx_status;
 
         if (moduleTopicBusWait(&app_log_.ins_subscriber_, pdMS_TO_TICKS(1000U)) == false) {
-            app_log_.wait_timeout_count_++;
-            continue;
+            // app_log_.wait_timeout_count_++;
+            // continue;
         }
 
         if (moduleTopicBusCopy(&app_log_.ins_subscriber_, &app_log_.ins_message_) == false) {
-            app_log_.copy_error_count_++;
-            continue;
+            // app_log_.copy_error_count_++;
+            // continue;
         }
 
         now_tick_ms = osKernelGetTickCount();
