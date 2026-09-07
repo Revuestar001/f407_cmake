@@ -12,7 +12,7 @@
 #define ALGORITHM_ESKF_MAX_DT_S 0.01f
 #define ALGORITHM_ESKF_MIN_DT_S 0.0002f
 
-#define ALGORITHM_ESKF_IMU_SAMPLE_FREQUENCY 400.0f // imu近似采样频率，只能用于初始化！
+#define ALGORITHM_ESKF_ACCEL_SAMPLE_FREQUENCY 400.0f // accel近似采样频率，只能用于初始化！
 #define ALGORITHM_ESKF_R_ACCEL_SCALE_FACTOR 10.0f // 加速度测量噪声放大系数
 #define ALGORITHM_ESKF_MAG_SAMPLE_FREQUENCY 200.0f // mag近似采样频率，只能用于初始化！
 #define ALGORITHM_ESKF_R_MAG_SCALE_FACTOR 20.0f // 磁力计测量噪声放大系数

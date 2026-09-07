@@ -100,6 +100,8 @@ deviceBMI088Status_e deviceBMI088UpdateDataDMAProcess(deviceBMI088Instance_t *in
 deviceBMI088Status_e deviceBMI088GetData(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out);
 // 获取转到对应机体坐标系下的当前传感器数据，默认bmi088与FLU对齐
 deviceBMI088Status_e deviceBMI088GetDataByOutputFrame(const deviceBMI088Instance_t *instance, deviceBMI088Data_t *data_out, deviceBMI088OutputFrame_e frame);
+// 配置accel数据就绪中断到INT1
+deviceBMI088Status_e deviceBMI088ConfigAccelDataReadyIT(deviceBMI088Instance_t *instance);
 // 配置bmi088的gyro数据就绪中断
 deviceBMI088Status_e deviceBMI088ConfigGyroDataReadyIT(deviceBMI088Instance_t *instance);
 deviceBMI088Status_e deviceBMI088GetMode(deviceBMI088Instance_t *instance, deviceBMI088Mode_e *mode_out);

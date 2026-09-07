@@ -524,7 +524,7 @@ bool algorithmESKFInit(algorithmESKF_t *instance, algorithmESKFParams_t *params)
     }
 
     // 设置测量噪声协方差矩阵R,这里是工程近似,元素值val = (连续时间噪声密度^2 * 采样频率f * 0.5) * 放大系数
-    float r_accel_init_val = params->accel_noise_ms2_sqrt_hz_ * params->accel_noise_ms2_sqrt_hz_ * ALGORITHM_ESKF_IMU_SAMPLE_FREQUENCY * 0.5f * ALGORITHM_ESKF_R_ACCEL_SCALE_FACTOR;
+    float r_accel_init_val = params->accel_noise_ms2_sqrt_hz_ * params->accel_noise_ms2_sqrt_hz_ * ALGORITHM_ESKF_ACCEL_SAMPLE_FREQUENCY * 0.5f * ALGORITHM_ESKF_R_ACCEL_SCALE_FACTOR;
     float r_mag_noise_density = params->mag_noise_ut_sqrt_hz_;
     mathVector3_t geo_mag_ref_vec_n = {0};
     memcpy(geo_mag_ref_vec_n.v_, instance->params_.init_params_.geo_mag_ref_dir_n_, sizeof(geo_mag_ref_vec_n.v_));

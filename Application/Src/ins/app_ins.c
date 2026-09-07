@@ -125,6 +125,7 @@ typedef struct app_ins_observation_data
 
     uint64_t imu_timestamp_us_; // imu时间戳
     uint64_t mag_timestamp_us_; // mag时间戳
+    bool accel_is_new_; // accel为400Hz，仅在新数据到来时给ekf做accel update
     bool mag_is_new_; // 表示这个mag_timestamp_us_时间戳下的mag数据是否是新来的，用于ekf的mag update
 } appINSObservationData_t; // ekf输入数据,请注意imu mag数据不同步
 
@@ -180,7 +181,8 @@ typedef struct app_ins
 
     appINSMagRecordData_t mag_record_data_; // 磁力计调试记录数据
 
-    volatile bool imu_drdy_pending_; // IMU数据就绪中断挂起标志
+    volatile bool accel_drdy_pending_; // accel数据就绪中断挂起标志，不单独唤醒任务
+    volatile bool gyro_drdy_pending_; // gyro数据就绪中断挂起标志，作为INS主时基
     volatile bool imu_dma_error_pending_; // IMU DMA传输错误中断挂起标志
 
     uint16_t error_count_;
@@ -189,6 +191,9 @@ typedef struct app_ins
 static appINSInstance_t app_ins_ = {0};
 volatile static uint32_t ins_loop_time = 0;
 volatile static uint32_t ins_loop_time_max = 0;
+volatile static uint32_t ins_bmi088_time = 0;
+volatile static uint32_t ins_mag_time = 0;
+volatile static uint32_t ins_ekf_time = 0;
 
 // gyro 校准应用,只减 bias
 // static void appINSApplyGyroBias(const float gyro[3], const float gyro_bias[3], float gyro_out[3])
@@ -617,15 +622,24 @@ static void appINSProcessAccelSixFaceCalibrate(void)
     }
 }
 
-// IMU Gyro数据就绪中断负责唤醒 INS 任务
-static void appINSIMUDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *gpio_instance)
+// Accel数据就绪中断只置位，仍由Gyro DRDY作为INS任务主时基
+static void appINSAccelDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *gpio_instance)
+{
+    (void)gpio_instance;
+    appINSInstance_t *instance = (appINSInstance_t *)owner;
+
+    instance->accel_drdy_pending_ = true;
+}
+
+// Gyro数据就绪中断负责记录IMU时间戳并唤醒INS任务
+static void appINSGyroDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *gpio_instance)
 {
     (void)gpio_instance;
     appINSInstance_t *instance = (appINSInstance_t *)owner;
 
     instance->observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
 
-    instance->imu_drdy_pending_ = true; // 新数据就绪，挂起标志
+    instance->gyro_drdy_pending_ = true;
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     vTaskNotifyGiveFromISR(instance->task_handle_, &xHigherPriorityTaskWoken);
@@ -664,17 +678,12 @@ static void appINSMAGDataReadyInterruptCallback(void *owner, bspGPIOInstance_t *
 // 注册 IMU drdy中断回调
 static bool appINSIMUDataReadyInterruptRegister(bspGPIOInstance_t *accel_int, bspGPIOInstance_t *gyro_int)
 {
-    if (accel_int == NULL && gyro_int == NULL) {
+    if (accel_int == NULL || gyro_int == NULL) {
         return false;
     }
 
-    // if (accel_int != NULL) {
-    //     bspGPIOIsrCallbackRegister(accel_int, &app_ins_, appINSIMUDataReadyInterruptCallback);
-    // }
-
-    if (gyro_int != NULL) {
-        bspGPIOIsrCallbackRegister(gyro_int, &app_ins_, appINSIMUDataReadyInterruptCallback);
-    }
+    bspGPIOIsrCallbackRegister(accel_int, &app_ins_, appINSAccelDataReadyInterruptCallback);
+    bspGPIOIsrCallbackRegister(gyro_int, &app_ins_, appINSGyroDataReadyInterruptCallback);
 
     return true;
 }
@@ -748,7 +757,7 @@ static bool appINSInit(void)
     bmi088_config.accel_cs_ = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_ACCEL);
     bmi088_config.gyro_cs_ = bspBoardGetGPIOInstance(BSP_GPIO_IMU_CS1_GYRO);
     bmi088_config.delay_us_callback_ = bspDWTDelayUs;
-    bmi088_config.mode_ = DEVICE_BMI088_EXTI_DMA;
+    bmi088_config.mode_ = DEVICE_BMI088_EXTI;
     bmi088_config.dma_xfer_cplt_notify_callback_from_isr_ = appINSIMUDMAXferCpltCallback;
     bmi088_config.dma_xfer_error_notify_callback_from_isr_ = appINSIMUDMAXferErrorCallback;
     bmi088_config.name_ = "IMU";
@@ -771,7 +780,12 @@ static bool appINSInit(void)
                 return false;
             }
 
-            // BMI088 的 gyro 数据就绪中断需要显式配置
+            // accel为400Hz，只置位新数据标志；gyro为1000Hz，作为INS任务主时基
+            if (deviceBMI088ConfigAccelDataReadyIT(app_ins_.bmi088_instance_) != DEVICE_BMI088_OK) {
+                app_ins_.stage_ = APP_INS_REINIT;
+                return false;
+            }
+
             if (deviceBMI088ConfigGyroDataReadyIT(app_ins_.bmi088_instance_) != DEVICE_BMI088_OK) {
                 app_ins_.stage_ = APP_INS_REINIT;
                 return false;
@@ -823,8 +837,21 @@ static bool appINSInit(void)
     return true;
 }
 
+// 取走一次accel DRDY标志，避免把同一份400Hz accel数据重复用于1000Hz EKF更新
+static bool appINSTakeAccelDataReady(void)
+{
+    bool accel_is_new;
+
+    taskENTER_CRITICAL();
+    accel_is_new = app_ins_.accel_drdy_pending_;
+    app_ins_.accel_drdy_pending_ = false;
+    taskEXIT_CRITICAL();
+
+    return accel_is_new;
+}
+
 // IMU数据已经更新完毕，获取最新数据，并生成一份校准后的 observation
-static bool appINSConsumeLatestIMUSample(void)
+static bool appINSConsumeLatestIMUSample(bool accel_is_new)
 {
     if (deviceBMI088GetDataByOutputFrame(app_ins_.bmi088_instance_, &app_ins_.latest_imu_data_, DEVICE_BMI088_OUTPUT_FRAME_FLU) != DEVICE_BMI088_OK) {
         app_ins_.error_count_++;
@@ -832,13 +859,16 @@ static bool appINSConsumeLatestIMUSample(void)
         return false;
     }
 
-    // 六面标定复用同一条 IMU 更新链推进，只有在accel六面校准模式下才进行校准，否则跳过
-    appINSProcessAccelSixFaceCalibrate();
-
     // 不再校正gyro
     // appINSApplyGyroBias(app_ins_.latest_imu_data_.gyro_rads_, app_ins_.calibrate_data_.gyro_bias_rads_, app_ins_.observation_data_.gyro_corrected_rads_);
     memcpy(app_ins_.observation_data_.gyro_no_correct_rads_, app_ins_.latest_imu_data_.gyro_rads_, sizeof(app_ins_.observation_data_.gyro_no_correct_rads_));
-    appINSApplyAccelBiasScale(app_ins_.latest_imu_data_.accel_ms2_, app_ins_.calibrate_data_.accel_bias_ms2_, app_ins_.calibrate_data_.accel_scale_, app_ins_.observation_data_.accel_offline_corrected_ms2_);
+
+    if (accel_is_new == true) {
+        // 六面标定与accel校正都只使用400Hz的新数据，避免重复累计同一帧
+        appINSProcessAccelSixFaceCalibrate();
+        appINSApplyAccelBiasScale(app_ins_.latest_imu_data_.accel_ms2_, app_ins_.calibrate_data_.accel_bias_ms2_, app_ins_.calibrate_data_.accel_scale_, app_ins_.observation_data_.accel_offline_corrected_ms2_);
+        app_ins_.observation_data_.accel_is_new_ = true;
+    }
     // 不在这里记录时间戳，应该在drdy中断中记录
     // app_ins_.observation_data_.imu_timestamp_us_ = bspDWTGetAbsTimeUs();
 
@@ -848,17 +878,23 @@ static bool appINSConsumeLatestIMUSample(void)
 // 更新 IMU latest snapshot，并生成一份校准后的 observation
 static bool appINSUpdateIMUSample(void)
 {
+    bool accel_is_new;
+
     if (app_ins_.stage_ == APP_INS_REINIT) {
         return false;
     }
 
+    accel_is_new = appINSTakeAccelDataReady();
     if (deviceBMI088UpdateData(app_ins_.bmi088_instance_) != DEVICE_BMI088_OK) {
+        if (accel_is_new == true) {
+            app_ins_.accel_drdy_pending_ = true;
+        }
         app_ins_.error_count_++;
         app_ins_.stage_ = APP_INS_DEGRADED;
         return false;
     }
     
-    if (appINSConsumeLatestIMUSample() == false) {
+    if (appINSConsumeLatestIMUSample(accel_is_new) == false) {
         app_ins_.error_count_++;
         app_ins_.stage_ = APP_INS_DEGRADED;
         return false;
@@ -965,17 +1001,20 @@ static bool appINSRunEKF(void)
         return false;
     }
 
-    // 同一帧 IMU 数据只允许驱动一次 predict/update
+    // 同一帧gyro数据只允许驱动一次predict
     if (imu_timestamp_us == app_ins_.last_ekf_imu_timestamp_us_) {
         return true;
     }
 
-    // 第一帧没有有效 dt，先只用 accel 做一次姿态校正
+    // 第一帧没有有效dt，只在accel确实有新数据时做一次姿态校正
     if (app_ins_.last_ekf_imu_timestamp_us_ == 0U) {
         app_ins_.last_ekf_imu_timestamp_us_ = imu_timestamp_us;
 
-        if (algorithmESKFAccelUpdate(&app_ins_.eskf_, app_ins_.observation_data_.accel_offline_corrected_ms2_, 0.0f) == false) {
-            return false;
+        if (app_ins_.observation_data_.accel_is_new_ == true) {
+            app_ins_.observation_data_.accel_is_new_ = false;
+            if (algorithmESKFAccelUpdate(&app_ins_.eskf_, app_ins_.observation_data_.accel_offline_corrected_ms2_, 0.0f) == false) {
+                return false;
+            }
         }
 
         appINSUpdateOutputDataFromESKF();
@@ -990,8 +1029,12 @@ static bool appINSRunEKF(void)
         return false;
     }
 
-    if (algorithmESKFAccelUpdate(&app_ins_.eskf_, app_ins_.observation_data_.accel_offline_corrected_ms2_, dt_s) == false) {
-        return false;
+    // accel为400Hz，只在DRDY确认有新数据时进行观测更新
+    if (app_ins_.observation_data_.accel_is_new_ == true) {
+        app_ins_.observation_data_.accel_is_new_ = false;
+        if (algorithmESKFAccelUpdate(&app_ins_.eskf_, app_ins_.observation_data_.accel_offline_corrected_ms2_, dt_s) == false) {
+            return false;
+        }
     }
 
     if (app_ins_.observation_data_.mag_is_new_ == true) {
@@ -1051,6 +1094,8 @@ void appINSTaskEntry(void *argument)
     for (;;) {
         uint32_t notify_count = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(APP_INS_MAX_UPDATE_WAIT_MS));
 
+        uint32_t start_cnt = bspDWTGetCount();
+        uint32_t section_start_cnt = bspDWTGetCount();
         if (notify_count > 0U) {
             // 收到 IMU 通知，更新一帧 IMU 数据
             switch (bmi088_mode) {
@@ -1070,7 +1115,7 @@ void appINSTaskEntry(void *argument)
                     bmi088_status = deviceBMI088UpdateDataDMAProcess(app_ins_.bmi088_instance_, &new_data_ready);
                     if (bmi088_status == DEVICE_BMI088_OK && new_data_ready == true) {
                         // 新IMU数据已更新
-                        if (appINSConsumeLatestIMUSample() == false) {
+                        if (appINSConsumeLatestIMUSample(appINSTakeAccelDataReady()) == false) {
                             app_ins_.error_count_++;
                             app_ins_.stage_ = APP_INS_DEGRADED;
                         }
@@ -1080,8 +1125,8 @@ void appINSTaskEntry(void *argument)
                     }
 
                     // IMU数据就绪标志挂起，说明要开启新一轮DMA传输
-                    if (app_ins_.imu_drdy_pending_ == true) {
-                        app_ins_.imu_drdy_pending_ = false;
+                    if (app_ins_.gyro_drdy_pending_ == true) {
+                        app_ins_.gyro_drdy_pending_ = false;
 
                         bmi088_status = deviceBMI088UpdateDataDMAStart(app_ins_.bmi088_instance_);
                         if (bmi088_status == DEVICE_BMI088_BUSY) {
@@ -1107,26 +1152,31 @@ void appINSTaskEntry(void *argument)
             // 没有收到 IMU 通知，先记一次超时
             app_ins_.error_count_++;
         }
+        ins_bmi088_time = bspDWTGetElapsedTimeUs(section_start_cnt);
 
         // 无论是否收到 IMU 通知，都继续推进 MAG 与 startup
+        section_start_cnt = bspDWTGetCount();
         appINSUpdateMAGSample();
+        ins_mag_time = bspDWTGetElapsedTimeUs(section_start_cnt);
         appINSProcessStartupStage();
 
         // 触发一次accel标定，为true时不进行accel校准，使用离线值
         static bool accel_calib_test_started = true;
-        if (app_ins_.stage_ == APP_INS_RUNNING) {        
-            if (app_ins_.stage_ == APP_INS_RUNNING && accel_calib_test_started == false) { 
+        if (app_ins_.stage_ == APP_INS_RUNNING) {
+            if (app_ins_.stage_ == APP_INS_RUNNING && accel_calib_test_started == false) {
                 appINSStartAccelSixFaceCalibrate();
                 accel_calib_test_started = true;
             }
         }
-        uint32_t start_cnt = bspDWTGetCount();
+
+        section_start_cnt = bspDWTGetCount();
         if (app_ins_.stage_ == APP_INS_RUNNING && app_ins_.mode_ == APP_INS_SERVICE_NORMAL) {
             if (appINSRunEKF() == false) {
                 app_ins_.error_count_++;
                 app_ins_.stage_ = APP_INS_DEGRADED;
             }
         }
+        ins_ekf_time = bspDWTGetElapsedTimeUs(section_start_cnt);
 
         msgINS_t msg;
         msg.timestamp_ = app_ins_.data_.timestamp_;

@@ -362,7 +362,7 @@ static bool deviceBMI088ConfigGyro(deviceBMI088Instance_t *instance)
     bool state = true;
 
     state &= deviceBMI088WriteSingleRegister(instance, DEVICE_BMI088_TARGET_GYRO, GYRO_RANGE_ADDR, GYRO_RANGE_2000_DEG_S);
-    state &= deviceBMI088WriteSingleRegister(instance, DEVICE_BMI088_TARGET_GYRO, GYRO_BANDWIDTH_ADDR, GYRO_ODR_400Hz_BANDWIDTH_47Hz);
+    state &= deviceBMI088WriteSingleRegister(instance, DEVICE_BMI088_TARGET_GYRO, GYRO_BANDWIDTH_ADDR, GYRO_ODR_1000Hz_BANDWIDTH_116Hz);
 
     return state;
 }
@@ -794,6 +794,54 @@ deviceBMI088Status_e deviceBMI088GetDataByOutputFrame(const deviceBMI088Instance
             break;
         default:
             return DEVICE_BMI088_ERROR;
+    }
+
+    return DEVICE_BMI088_OK;
+}
+
+// 配置bmi088的accel数据就绪中断
+deviceBMI088Status_e deviceBMI088ConfigAccelDataReadyIT(deviceBMI088Instance_t *instance)
+{
+    if (instance == NULL) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    if (instance->mode_ == DEVICE_BMI088_BLOCKING) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    // BMI088数据就绪中断配置使用阻塞读取
+    bspSPIStatus_e spi_status;
+    spi_status = bspSPIChangeWorkMode(instance->spi_instance_, BSP_SPI_WORK_MODE_BLOCKING);
+    if (spi_status != BSP_SPI_OK) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    bool state = true;
+
+    // 将accel INT1配置为推挽输出、低电平有效
+    state &= deviceBMI088WriteSingleRegister(instance,
+                                            DEVICE_BMI088_TARGET_ACCEL,
+                                            INT1_IO_CTRL_ADDR,
+                                            INT1_IO_CTRL_PP_ACTIVE_LOW_VAL);
+    if (state == false) {
+        return DEVICE_BMI088_ERROR;
+    }
+    deviceBMI088DelayUs(instance, 2U);
+
+    // 将accel的数据准备完成中断映射到INT1
+    state &= deviceBMI088WriteSingleRegister(instance,
+                                            DEVICE_BMI088_TARGET_ACCEL,
+                                            INT_MAP_DATA_ADDR,
+                                            INT_MAP_DATA_DRDY_INT1_VAL);
+    if (state == false) {
+        return DEVICE_BMI088_ERROR;
+    }
+
+    // 切换回配置指定的SPI模式
+    deviceBMI088DelayUs(instance, DEVICE_BMI088_BUS_IDLE_DELAY_US);
+    if (changeSPIWorkModeByBMI088Config(instance) == false) {
+        return DEVICE_BMI088_ERROR;
     }
 
     return DEVICE_BMI088_OK;
