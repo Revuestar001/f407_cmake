@@ -8,6 +8,7 @@
 #include "bsp_def.h"
 #include "bsp_can.h"
 #include "bsp_can_private.h"
+#include "bsp_critical.h"
 #include "stm32f4xx_hal_can.h"
 
 typedef struct can_instance
@@ -19,7 +20,18 @@ typedef struct can_instance
     bspCANRxRoute_t rx_route_[BSP_CAN_SINGLE_MAX_DEVICE_NUM];
     uint8_t rx_route_count_;
     uint8_t filter_configured_route_count_;
+    uint8_t filter_bank_base_;
     bool is_started_;
+
+    bspCANMessage_t tx_queue_[BSP_CAN_TX_QUEUE_DEPTH];
+    volatile uint8_t tx_queue_head_;
+    volatile uint8_t tx_queue_tail_;
+    volatile uint8_t tx_queue_count_;
+    volatile uint8_t tx_queue_high_watermark_;
+    volatile uint32_t tx_enqueue_count_;
+    volatile uint32_t tx_complete_count_;
+    volatile uint32_t tx_queue_full_count_;
+    volatile uint32_t tx_hal_error_count_;
 
     bspCANErrorCallback_f error_callback_;
 } bspCANInstance_t;
@@ -52,6 +64,90 @@ static bspCANInstance_t *bspCANFindInstanceByHandle(CAN_HandleTypeDef *can_handl
         }
     }
     return NULL;
+}
+
+static uint8_t bspCANGetNextTxQueueIndex(uint8_t index)
+{
+    index++;
+    if (index >= BSP_CAN_TX_QUEUE_DEPTH) {
+        index = 0U;
+    }
+
+    return index;
+}
+
+static bool bspCANTxQueuePush(bspCANInstance_t *instance, const bspCANMessage_t *tx_message)
+{
+    if (instance == NULL || tx_message == NULL) {
+        return false;
+    }
+
+    if (instance->tx_queue_count_ >= BSP_CAN_TX_QUEUE_DEPTH) {
+        return false;
+    }
+
+    instance->tx_queue_[instance->tx_queue_head_] = *tx_message;
+    instance->tx_queue_head_ = bspCANGetNextTxQueueIndex(instance->tx_queue_head_);
+    instance->tx_queue_count_++;
+    instance->tx_enqueue_count_++;
+
+    if (instance->tx_queue_count_ > instance->tx_queue_high_watermark_) {
+        instance->tx_queue_high_watermark_ = instance->tx_queue_count_;
+    }
+
+    return true;
+}
+
+static bspCANStatus_e bspCANLoadOneTxMessageToMailbox(bspCANInstance_t *instance)
+{
+    if (instance == NULL || instance->can_handle_ == NULL) {
+        return BSP_CAN_ERROR;
+    }
+
+    if (instance->tx_queue_count_ == 0U ||
+        HAL_CAN_GetTxMailboxesFreeLevel(instance->can_handle_) == 0U) {
+        return BSP_CAN_BUSY;
+    }
+
+    const bspCANMessage_t *tx_message = &instance->tx_queue_[instance->tx_queue_tail_];
+    CAN_TxHeaderTypeDef tx_message_header_hal = {0};
+    if (tx_message->message_header_.message_ide_ == CAN_ID_STD) {
+        tx_message_header_hal.StdId = tx_message->message_header_.message_id_;
+    } else {
+        tx_message_header_hal.ExtId = tx_message->message_header_.message_id_;
+    }
+    tx_message_header_hal.IDE = tx_message->message_header_.message_ide_;
+    tx_message_header_hal.RTR = tx_message->message_header_.message_rtr_;
+    tx_message_header_hal.DLC = tx_message->message_header_.message_dlc_;
+    tx_message_header_hal.TransmitGlobalTime = DISABLE;
+
+    uint32_t tx_mailbox = 0U;
+    HAL_StatusTypeDef status_hal = HAL_CAN_AddTxMessage(instance->can_handle_,
+                                                        &tx_message_header_hal,
+                                                        tx_message->message_data_,
+                                                        &tx_mailbox);
+    if (status_hal != HAL_OK) {
+        instance->tx_hal_error_count_++;
+        return bspCANGetStatusFromHAL(status_hal);
+    }
+
+    instance->tx_queue_tail_ = bspCANGetNextTxQueueIndex(instance->tx_queue_tail_);
+    instance->tx_queue_count_--;
+
+    return BSP_CAN_OK;
+}
+
+static void bspCANTxMailboxCompleteCallback(CAN_HandleTypeDef *hcan)
+{
+    bspCANInstance_t *instance = bspCANFindInstanceByHandle(hcan);
+    if (instance == NULL) {
+        return;
+    }
+
+    bspCriticalIRQState_t irq_state = bspCriticalEnter();
+    instance->tx_complete_count_++;
+    (void)bspCANLoadOneTxMessageToMailbox(instance);
+    bspCriticalExit(irq_state);
 }
 
 static bspCANRxRoute_t *bspCANFindRxRouteByHeader(bspCANInstance_t *instance,
@@ -126,6 +222,7 @@ bspCANInstance_t *bspCANInit(const bspCANConfig_t *config)
     bspCANInstance_t *instance = &can_instance_memory_[can_memory_index_];
     memset(instance, 0, sizeof(bspCANInstance_t));
     instance->can_handle_ = config->can_handle_;
+    instance->filter_bank_base_ = config->filter_bank_base_;
     instance->name_ = config->name_;
     instance->rx_route_count_ = 0;
     instance->filter_configured_route_count_ = 0;
@@ -181,12 +278,12 @@ bspCANStatus_e bspCANSetFilter(bspCANInstance_t *instance)
         filter_config.FilterMaskIdLow = (instance->rx_route_[i].route_id_) << 5;
         filter_config.FilterMaskIdHigh = (instance->rx_route_[i].route_id_) << 5;
         filter_config.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-        filter_config.FilterBank = i; // 这是很浪费的写法，但暂时这样
+        filter_config.FilterBank = instance->filter_bank_base_ + i; // 这是很浪费的写法，但暂时这样
         filter_config.FilterMode = CAN_FILTERMODE_IDLIST;
         filter_config.FilterScale = CAN_FILTERSCALE_16BIT;
         filter_config.FilterActivation = CAN_FILTER_ENABLE;
         // bxCAN由主CAN1和从CAN2，共用0-27总共28个filterbank，这个参数是用来划定从[SlaveStartFilterBank, 27]之间的filterbank给CAN2
-        filter_config.SlaveStartFilterBank = 14; 
+        filter_config.SlaveStartFilterBank = BSP_CAN_FILTER_BANK_SPLIT_INDEX;
         
         status_hal = HAL_CAN_ConfigFilter(instance->can_handle_, &filter_config);
         if (status_hal != HAL_OK) {
@@ -227,46 +324,40 @@ bspCANStatus_e bspCANStart(bspCANInstance_t *instance)
         return bspCANGetStatusFromHAL(status_hal);
     }
 
+    // 开启发送邮箱空中断，发送完成后继续从软件队列装填下一帧
+    status_hal = HAL_CAN_ActivateNotification(instance->can_handle_, CAN_IT_TX_MAILBOX_EMPTY);
+    if (status_hal != HAL_OK) {
+        return bspCANGetStatusFromHAL(status_hal);
+    }
+
     instance->is_started_ = true;
 
     return BSP_CAN_OK;
 }
 
-// 无阻塞，之后可能可以加一个阻塞等待，但是这个等待给上层处理或许更好？
+// 非阻塞发送；返回OK表示报文已被CAN发送链路接收，不表示已经完成总线发送
 bspCANStatus_e bspCANTransmit(bspCANInstance_t *instance, const bspCANMessage_t *tx_message)
 {
     if (instance == NULL || 
         instance->can_handle_ == NULL || 
-        tx_message == NULL || 
+        tx_message == NULL ||
+        instance->is_started_ == false ||
         tx_message->message_header_.message_dlc_ > 8) { // 注意载荷为0没关系
         return BSP_CAN_ERROR;
     }
 
-    HAL_StatusTypeDef status_hal;
-    // 将消息添加到邮箱前，必须先检查3个邮箱是否有空位
-    if (HAL_CAN_GetTxMailboxesFreeLevel(instance->can_handle_) == 0) {
-        // 没有空位
+    bspCriticalIRQState_t irq_state = bspCriticalEnter();
+    if (bspCANTxQueuePush(instance, tx_message) == false) {
+        instance->tx_queue_full_count_++;
+        bspCriticalExit(irq_state);
         return BSP_CAN_BUSY;
     }
-    
-    CAN_TxHeaderTypeDef tx_message_header_hal;
-    if (tx_message->message_header_.message_ide_ == CAN_ID_STD) {
-        tx_message_header_hal.StdId = tx_message->message_header_.message_id_;
-    } else {
-        tx_message_header_hal.ExtId = tx_message->message_header_.message_id_;
-    }
-    tx_message_header_hal.IDE = tx_message->message_header_.message_ide_;
-    tx_message_header_hal.RTR = tx_message->message_header_.message_rtr_;
-    tx_message_header_hal.DLC = tx_message->message_header_.message_dlc_;
-    tx_message_header_hal.TransmitGlobalTime = DISABLE;
-    uint32_t tx_mailbox = 0;
 
-    status_hal = HAL_CAN_AddTxMessage(instance->can_handle_, 
-                                    &tx_message_header_hal, 
-                                    tx_message->message_data_, 
-                                    &tx_mailbox);
-    
-    return bspCANGetStatusFromHAL(status_hal);
+    // 每次最多装填一帧，避免在全局临界区内长时间循环操作HAL
+    (void)bspCANLoadOneTxMessageToMailbox(instance);
+    bspCriticalExit(irq_state);
+
+    return BSP_CAN_OK;
 }
 
 static void bspCANFifoxMsgPendingCallback(CAN_HandleTypeDef *hcan, uint32_t RX_FIFOx)
@@ -305,5 +396,20 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
     bspCANFifoxMsgPendingCallback(hcan, CAN_RX_FIFO1);
+}
+
+void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+    bspCANTxMailboxCompleteCallback(hcan);
+}
+
+void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+    bspCANTxMailboxCompleteCallback(hcan);
+}
+
+void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+    bspCANTxMailboxCompleteCallback(hcan);
 }
 

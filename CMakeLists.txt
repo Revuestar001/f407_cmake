@@ -52,9 +52,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/bsp_dwt/bsp_dwt.c
     Bsp/Src/bsp_i2c/bsp_i2c.c
     Bsp/Src/bsp_critical/bsp_critical.c
+    # Bsp/Src/bsp_flash/bsp_flash.c
     Bsp/Src/bsp_board.c
 
     Module/Src/util/ring_buffer.c
+    Module/Src/util/crc16.c
+    Module/Src/util/crc32.c
     Module/Src/protocol/sbus.c
     Module/Src/rc_mapper/rc_mapper.c
     Module/Src/motor_actuator/motor_actuator.c
@@ -97,6 +100,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Inc/bsp_dwt/
     Bsp/Inc/bsp_i2c/
     Bsp/Inc/bsp_critical/
+    # Bsp/Inc/bsp_flash/
     Bsp/Inc/
 
     Module/Inc/util/

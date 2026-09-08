@@ -171,10 +171,12 @@ bspSPIInstance_t *bspBoardGetSPIInstance(bspSPIId_e spi_id)
 // CAN
 //
 static bspCANConfig_t bspBoardSetCANConfig(CAN_HandleTypeDef *can_handle,
+                                            uint8_t filter_bank_base,
                                             const char *can_name)
 {
     bspCANConfig_t can_config;
     can_config.can_handle_ = can_handle;
+    can_config.filter_bank_base_ = filter_bank_base;
     can_config.name_ = can_name;
 
     return can_config;
@@ -184,8 +186,10 @@ static void bspBoardCANInit()
 {
     bspCANConfig_t can_config = {0};
 
-    can_config = bspBoardSetCANConfig(&hcan1, "CAN1");
+    can_config = bspBoardSetCANConfig(&hcan1, 0U, "CAN1");
     bspBoardCANInstancePtrArray[BSP_CAN_1] = bspCANInit(&can_config);
+    can_config = bspBoardSetCANConfig(&hcan2, BSP_CAN_FILTER_BANK_SPLIT_INDEX, "CAN2");
+    bspBoardCANInstancePtrArray[BSP_CAN_2] = bspCANInit(&can_config);
 }
 
 bspCANInstance_t *bspBoardGetCANInstance(bspCANId_e can_id)

@@ -10,6 +10,8 @@ typedef struct can_config
 {
     CAN_HandleTypeDef *can_handle_;
 
+    uint8_t filter_bank_base_;
+
     const char *name_;
 } bspCANConfig_t;
 

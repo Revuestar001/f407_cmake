@@ -44,6 +44,7 @@ bspSPIInstance_t *bspBoardGetSPIInstance(bspSPIId_e spi_id);
 typedef enum 
 {
     BSP_CAN_1 = 0,
+    BSP_CAN_2,
     BSP_CAN_MAX
 } bspCANId_e;
 
